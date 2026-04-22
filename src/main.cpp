@@ -28,69 +28,92 @@
 
 static constexpr const char* TAG = "main";
 
+// Diagnostica: tutti i Serial.printf qui bypassano CORE_DEBUG_LEVEL e si vedono
+// sempre sul monitor seriale a 115200.  Utile per isolare i reset HP_SYS_HP_WDT
+// quando il device riparte prima che le normali ESP_LOGI vengano mostrate.
+#define DIAG(fmt, ...) do { Serial.printf("[DIAG] " fmt "\n", ##__VA_ARGS__); Serial.flush(); } while (0)
+
+static void heartbeat_task(void* /*arg*/) {
+    // Task separato, pin su entrambi i core liberamente.  Se questo heartbeat
+    // smette di comparire vuol dire che lo scheduler e' bloccato.
+    uint32_t tick = 0;
+    while (true) {
+        const uint64_t uptime_ms = esp_timer_get_time() / 1000ULL;
+        const size_t   heap_kb   = esp_get_free_heap_size() / 1024;
+        const size_t   psram_kb  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024;
+        Serial.printf("[BEAT] #%lu uptime=%llums heap=%uK psram=%uK\n",
+                      static_cast<unsigned long>(tick++),
+                      uptime_ms,
+                      static_cast<unsigned>(heap_kb),
+                      static_cast<unsigned>(psram_kb));
+        Serial.flush();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
-    ESP_LOGI(TAG, "*** Abarth Dashboard booting ***");
-    // Motivo dell'ultimo reset: utile per diagnosticare loop di reboot.
-    ESP_LOGI(TAG, "reset reason: %d", static_cast<int>(esp_reset_reason()));
+    DIAG("*** Abarth Dashboard booting ***");
+    DIAG("reset reason = %d", static_cast<int>(esp_reset_reason()));
+    DIAG("free heap  = %u B", static_cast<unsigned>(esp_get_free_heap_size()));
+    DIAG("free psram = %u B", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
 
+    // Avvia subito il task di heartbeat, cosi' se un init dopo blocca
+    // scheduler / interrupt vediamo esattamente a che punto si e' fermato.
+    xTaskCreatePinnedToCore(heartbeat_task, "beat", 3072, nullptr,
+                            tskIDLE_PRIORITY + 1, nullptr, tskNO_AFFINITY);
+    DIAG("heartbeat task avviato");
+
+    DIAG("step: data store init");
     if (!abarth::data::store().init()) {
-        ESP_LOGE(TAG, "data store init fallito");
+        DIAG("ERRORE data store init");
     }
 
+    DIAG("step: settings init (NVS)");
     abarth::settings::init();
 
+    DIAG("step: display init");
     if (!abarth::display::init()) {
-        ESP_LOGE(TAG, "display init fallito");
+        DIAG("ERRORE display init");
     }
+    DIAG("display init OK");
 
-    // Applica la luminosita' salvata (display::init parte a 80% come default).
+    DIAG("step: setBrightness %d",
+         static_cast<int>(abarth::settings::current().brightness));
     abarth::display::setBrightness(
         static_cast<int>(abarth::settings::current().brightness));
 
+    DIAG("step: splash show");
     abarth::ui::splash::show();
     abarth::ui::splash::setStatus("Avvio modulo OBD...");
 
+    DIAG("step: OBD start");
     if (!abarth::obd::obd().start()) {
-        ESP_LOGE(TAG, "impossibile avviare task OBD");
+        DIAG("ERRORE OBD start");
     }
 
-    // Diamo qualche istante allo splash per partire e al task OBD per fare
-    // il primo tentativo di scan BLE.
+    DIAG("step: splash hold 1200ms");
     delay(1200);
     abarth::ui::splash::setStatus("Costruzione interfaccia...");
 
-    // Costruzione UI principale: prende il lock LVGL, crea tutti i widget e
-    // carica lo screen nuovo (tipicamente 200-400 ms).
+    DIAG("step: ui::build");
     abarth::ui::build();
+    DIAG("ui::build OK");
 
     abarth::ui::splash::setStatus("Pronto.");
 
-    // Attesa finale per far godere lo splash prima del tabview principale.
-    // Totale splash visibile: ~4 s, coerente con la barra di progresso.
+    DIAG("step: splash hold finale 2200ms");
     delay(2200);
+
+    DIAG("step: splash dismiss");
     abarth::ui::splash::dismiss();
 
-    ESP_LOGI(TAG, "setup completato");
+    DIAG("*** setup completato, entro in loop() ***");
 }
 
 void loop() {
-    // Heartbeat di diagnostica: stampa heap/psram/uptime ogni 10 s in modo
-    // che da seriale si possa capire se il board e' stabile o riparte.
-    static uint32_t last_log_s = 0;
-    const uint64_t uptime_s = esp_timer_get_time() / 1000000ULL;
-    if (uptime_s - last_log_s >= 10) {
-        last_log_s = static_cast<uint32_t>(uptime_s);
-        const size_t free_heap  = esp_get_free_heap_size();
-        const size_t min_heap   = esp_get_minimum_free_heap_size();
-        const size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-        ESP_LOGI(TAG,
-                 "heartbeat uptime=%llus heap=%u (min %u) psram=%u",
-                 uptime_s,
-                 static_cast<unsigned>(free_heap),
-                 static_cast<unsigned>(min_heap),
-                 static_cast<unsigned>(free_psram));
-    }
+    // Il loop Arduino fa solo vTaskDelay: il lavoro vero e' nel task LVGL
+    // (port esp-arduino-libs) e nel task OBD.
     delay(1000);
 }
