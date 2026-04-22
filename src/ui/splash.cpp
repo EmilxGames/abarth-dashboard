@@ -181,6 +181,23 @@ void dismiss() {
         lv_bar_set_value(g_bar, 100, LV_ANIM_OFF);
     }
     if (g_screen) {
+        // Se lo splash e' ancora lo screen attivo (caso: nessun altro
+        // screen e' stato caricato dopo), creiamo uno screen vuoto prima
+        // di distruggere quello corrente.  Altrimenti LVGL prova a
+        // renderizzare uno screen liberato e va in Load access fault.
+        if (lv_scr_act() == g_screen) {
+            lv_obj_t* blank = lv_obj_create(nullptr);
+            lv_obj_set_style_bg_color(blank, lv_color_hex(0x0B0B10), 0);
+            lv_obj_set_style_bg_opa(blank, LV_OPA_COVER, 0);
+            lv_scr_load(blank);
+        }
+        // Rimuove TUTTE le animazioni in volo (spinner, bar, ecc.) prima
+        // di liberare gli oggetti.  lv_obj_del non sempre ripulisce le
+        // animazioni registrate su nodi figlio e una callback successiva
+        // su oggetto liberato fa crashare LVGL qualche secondo dopo.
+        // In questa fase di boot solo le animazioni dello splash possono
+        // essere attive, quindi ripulire tutto e' sicuro.
+        lv_anim_del_all();
         lv_obj_del(g_screen);
         g_screen = nullptr;
         g_bar = nullptr;
