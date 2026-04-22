@@ -49,9 +49,28 @@ Clona e compila:
 ```bash
 git clone https://github.com/EmilxGames/abarth-dashboard.git
 cd abarth-dashboard
-pio run                         # build
+pio run                         # build env di default = abarth-p4-guition-custom
 pio run --target upload         # flash del display (USB-C collegato)
-pio device monitor               # log seriale
+pio device monitor              # log seriale (115200)
+```
+
+Su Windows, se `python` apre il Microsoft Store invece dell'interprete, disabilita
+l'alias da *Impostazioni → App → Impostazioni app avanzate → Alias di esecuzione
+dell'app* e installa Python ≥ 3.10 da <https://python.org> spuntando
+"Add python.exe to PATH".
+
+### Environment PlatformIO disponibili
+
+| env                          | uso                                                                 |
+| ---------------------------- | ------------------------------------------------------------------- |
+| `abarth-p4-guition-custom`   | **default**: pin + init sequence JD9165 del Guition JC1060P470C-I-W-Y |
+| `abarth-p4-funcboard`        | fallback sulla Function-EV-Board Espressif (pin generici, solo dev)  |
+
+Per compilare esplicitamente un env specifico:
+
+```bash
+pio run -e abarth-p4-guition-custom
+pio run -e abarth-p4-guition-custom --target upload
 ```
 
 Il primo `pio run` scarica automaticamente:
@@ -141,11 +160,15 @@ abarth-dashboard/
 
 ## Troubleshooting
 
-- **Il display resta nero / non carica LVGL**: la libreria
-  `ESP32_Display_Panel` ha un preset ufficiale per `JC1060P470C`. Se la
-  versione installata non lo include ancora, aggiorna a ≥ 1.0.1 o
-  copia/adatta i config file dalla cartella `boards/` della repository
-  `esp-arduino-libs/ESP32_Display_Panel`.
+- **Il display resta nero / non carica LVGL**: stai probabilmente usando
+  l'env fallback `abarth-p4-funcboard` (pin della Function-EV-Board
+  Espressif, incompatibili col Guition reale). Passa a
+  `pio run -e abarth-p4-guition-custom --target upload`. Il file
+  [`src/esp_panel_board_custom_conf.h`](src/esp_panel_board_custom_conf.h)
+  contiene i pin del Guition JC1060P470C-I-W-Y estratti dallo schematico
+  V1.0 e dalla demo ufficiale `Demo_Arduino/lvgl_demo_v8`: LCD reset
+  GPIO5, I2C touch SDA/SCL GPIO7/8, backlight PWM GPIO23. La init
+  sequence e' quella del driver `esp_lcd_jd9165` ufficiale Guition.
 - **Il dongle non viene trovato**: il vLinker FD ha due modalità (dip
   switch/pulsante): **AUTO** e **iPhone (BLE)**. Mettilo in modalità
   iPhone/BLE. Su ESP32-C6 il Bluetooth Classic non è disponibile, serve
