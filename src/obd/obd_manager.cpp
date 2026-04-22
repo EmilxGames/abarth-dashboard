@@ -42,6 +42,12 @@ void ObdManager::setState(ObdState s) {
     const ObdState prev = state_.load();
     if (prev == s) return;
     ESP_LOGI(TAG, "stato: %s -> %s", stateName(prev), stateName(s));
+    // Mirror via printf per renderlo visibile sul monitor USB (su ESP32-P4
+    // Guition ESP_LOGI non arriva).
+    printf("[I][obd] [STATE] %s -> %s (uptime=%lldms)\n",
+           stateName(prev), stateName(s),
+           static_cast<long long>(esp_timer_get_time() / 1000));
+    fflush(stdout);
     state_.store(s);
     // All'ingresso nello stato Polling (nuova connessione) ripristiniamo il
     // flag "supported" di tutti i PID: se l'auto risponde di nuovo a uno

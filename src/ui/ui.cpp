@@ -233,6 +233,15 @@ void update_header_clock() {
 
 void on_tick(lv_timer_t* /*t*/) {
     const int64_t now_ms = esp_timer_get_time() / 1000;
+    // Traccia: stampiamo ogni 20 tick (= 2 s a 10 Hz) per capire se il
+    // timer UI si ferma prima del reset HP_WDT.
+    static uint32_t tick_count = 0;
+    if ((tick_count++ % 20) == 0) {
+        printf("[I][ui] [TICK] #%lu uptime=%lldms\n",
+               static_cast<unsigned long>(tick_count - 1),
+               static_cast<long long>(now_ms));
+        fflush(stdout);
+    }
     char buf[32];
     for (size_t i = 0; i < g_card_count; ++i) {
         Card& c = g_cards[i];
