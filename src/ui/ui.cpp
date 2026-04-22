@@ -242,6 +242,7 @@ void on_tick(lv_timer_t* /*t*/) {
                static_cast<long long>(now_ms));
         fflush(stdout);
     }
+#ifndef ABARTH_DIAG_NO_TICK_CARDS
     char buf[32];
     for (size_t i = 0; i < g_card_count; ++i) {
         Card& c = g_cards[i];
@@ -252,7 +253,9 @@ void on_tick(lv_timer_t* /*t*/) {
         apply_value_style(c.value_label, real);
         refresh_card_unit(c);
     }
+#endif
 
+#ifndef ABARTH_DIAG_NO_TICK_HEADER
     if (g_state_label) {
         lv_label_set_text(g_state_label,
                           abarth::obd::stateName(abarth::obd::obd().state()));
@@ -264,9 +267,12 @@ void on_tick(lv_timer_t* /*t*/) {
                       static_cast<unsigned long>(abarth::obd::obd().failedReads()));
         lv_label_set_text(g_counters_label, tmp);
     }
-
     update_header_clock();
+#endif
+
+#ifndef ABARTH_DIAG_NO_TICK_SETTINGS
     settings_tab::tick();
+#endif
 }
 
 }  // namespace
