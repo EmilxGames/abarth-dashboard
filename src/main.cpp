@@ -49,7 +49,9 @@ static void heartbeat_task(void* /*arg*/) {
                static_cast<unsigned>(heap_kb),
                static_cast<unsigned>(psram_kb));
         fflush(stdout);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        // 200 ms per pinpoint-are l'esatto momento del crash (HP_WDT fires
+        // su interrupts-disabled > 300 ms).
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
 
