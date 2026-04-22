@@ -311,7 +311,7 @@ void build() {
     g_state_label = lv_label_create(right);
     lv_obj_set_style_text_color(g_state_label, lv_color_hex(0xDEDEDE), 0);
     lv_obj_set_style_text_font(g_state_label, &lv_font_montserrat_16, 0);
-    lv_label_set_text(g_state_label, "—");
+    lv_label_set_text(g_state_label, "");
 
     /* --- Tabview ---------------------------------------------------------- */
     lv_obj_t* tabview = lv_tabview_create(scr, LV_DIR_TOP, 48);
@@ -328,7 +328,7 @@ void build() {
     /* Motore ---------------------------------------------------------------- */
     setup_grid_tab(t_motor);
     auto& cRpm  = add_card(t_motor, Metric::Rpm,        "Giri motore",   "RPM",  0);
-    auto& cSpd  = add_card(t_motor, Metric::Speed,      "Velocità",      "km/h", 0, ValueKind::SpeedKmh);
+    auto& cSpd  = add_card(t_motor, Metric::Speed,      "Velocita'",     "km/h", 0, ValueKind::SpeedKmh);
     auto& cLoad = add_card(t_motor, Metric::EngineLoad, "Carico motore", "%",    0);
     auto& cThr  = add_card(t_motor, Metric::Throttle,   "Acceleratore",  "%",    0);
     set_card_size(cRpm, 2, 2);  set_card_size(cSpd, 2, 2);
@@ -336,11 +336,11 @@ void build() {
 
     /* Temperature ----------------------------------------------------------- */
     setup_grid_tab(t_temp);
-    auto& cCool = add_card(t_temp, Metric::CoolantTempC,   "Temp. liquido", "°C", 0, ValueKind::TempC);
-    auto& cOil  = add_card(t_temp, Metric::OilTempC,       "Temp. olio",    "°C", 0, ValueKind::TempC);
-    auto& cIat  = add_card(t_temp, Metric::IntakeAirTempC, "Aria aspirata", "°C", 0, ValueKind::TempC);
-    auto& cAmb  = add_card(t_temp, Metric::AmbientTempC,   "Temp. esterna", "°C", 0, ValueKind::TempC);
-    auto& cEgt  = add_card(t_temp, Metric::EgtC,           "Gas scarico",   "°C", 0, ValueKind::TempC);
+    auto& cCool = add_card(t_temp, Metric::CoolantTempC,   "Temp. liquido", "C", 0, ValueKind::TempC);
+    auto& cOil  = add_card(t_temp, Metric::OilTempC,       "Temp. olio",    "C", 0, ValueKind::TempC);
+    auto& cIat  = add_card(t_temp, Metric::IntakeAirTempC, "Aria aspirata", "C", 0, ValueKind::TempC);
+    auto& cAmb  = add_card(t_temp, Metric::AmbientTempC,   "Temp. esterna", "C", 0, ValueKind::TempC);
+    auto& cEgt  = add_card(t_temp, Metric::EgtC,           "Gas scarico",   "C", 0, ValueKind::TempC);
     set_card_size(cCool, 3, 2); set_card_size(cOil, 3, 2); set_card_size(cIat, 3, 2);
     set_card_size(cAmb, 3, 2);  set_card_size(cEgt, 3, 2);
 
