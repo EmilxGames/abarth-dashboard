@@ -35,10 +35,12 @@ enum class Metric : uint8_t {
     Count_            ///< sentinel, non rimuovere
 };
 
-/// Valore letto, con timestamp dell'ultimo update (ms da boot, -1 = mai).
+/// Valore letto, con timestamp dell'ultimo update (ms da boot, -1 = mai) e
+/// flag di supporto PID (false se la centralina ha risposto "NO DATA").
 struct Sample {
     float   value      = 0.0f;
     int64_t updated_ms = -1;
+    bool    supported  = true;   ///< diventa false se la ECU ha risposto NO DATA
 
     /// Ritorna true se e' stato aggiornato almeno una volta.
     bool valid() const { return updated_ms >= 0; }
@@ -60,14 +62,21 @@ public:
     /// Deve essere chiamato prima dell'uso (crea il mutex).
     bool init();
 
-    /// Aggiorna il valore di una metrica.
+    /// Aggiorna il valore di una metrica e la marca come supportata.
     void set(Metric m, float value);
 
     /// Ritorna uno snapshot della metrica richiesta.
     Sample get(Metric m) const;
 
-    /// Marca una metrica come "non disponibile" (reset).
+    /// Marca una metrica come "non disponibile" (reset completo).
     void invalidate(Metric m);
+
+    /// Marca una metrica come non supportata dalla centralina (NO DATA).
+    void markNotSupported(Metric m);
+
+    /// Resetta il flag "non supportato" su tutte le metriche (es. alla
+    /// riconnessione del dongle).
+    void clearSupportFlags();
 
 private:
     mutable SemaphoreHandle_t mutex_ = nullptr;

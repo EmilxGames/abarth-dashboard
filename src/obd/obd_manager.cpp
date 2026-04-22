@@ -39,9 +39,16 @@ bool ObdManager::start() {
 }
 
 void ObdManager::setState(ObdState s) {
-    if (state_.load() == s) return;
-    ESP_LOGI(TAG, "stato: %s -> %s", stateName(state_.load()), stateName(s));
+    const ObdState prev = state_.load();
+    if (prev == s) return;
+    ESP_LOGI(TAG, "stato: %s -> %s", stateName(prev), stateName(s));
     state_.store(s);
+    // All'ingresso nello stato Polling (nuova connessione) ripristiniamo il
+    // flag "supported" di tutti i PID: se l'auto risponde di nuovo a uno
+    // che prima era NO DATA, ricomincia a mostrarne il valore.
+    if (s == ObdState::Polling && prev != ObdState::Polling) {
+        data::store().clearSupportFlags();
+    }
 }
 
 void ObdManager::taskTrampoline(void* arg) {
@@ -124,7 +131,13 @@ bool ObdManager::pollOnce() {
         ElmResponse resp = elm_.command(std::string(spec.request), kElmResponseTimeoutMs);
         if (!resp.ok) {
             fail_count_.fetch_add(1);
-            if (resp.error == "NO DATA") return true;                   // PID non supportato
+            if (resp.error == "NO DATA") {
+                // La centralina ha risposto ma non supporta questo PID: lo
+                // marchiamo cosi' l'UI mostra "Non supportato" invece di
+                // lasciare il valore come "Attesa...".
+                data::store().markNotSupported(spec.metric);
+                return true;
+            }
             if (resp.error.find("timeout") != std::string::npos) return false;
             return true;
         }

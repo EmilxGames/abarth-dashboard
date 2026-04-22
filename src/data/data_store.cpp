@@ -34,6 +34,7 @@ void DataStore::set(Metric m, float value) {
     if (xSemaphoreTake(mutex_, pdMS_TO_TICKS(10)) == pdTRUE) {
         samples_[idx].value      = value;
         samples_[idx].updated_ms = now_ms();
+        samples_[idx].supported  = true;
         xSemaphoreGive(mutex_);
     }
 }
@@ -56,6 +57,27 @@ void DataStore::invalidate(Metric m) {
     if (!mutex_) return;
     if (xSemaphoreTake(mutex_, pdMS_TO_TICKS(10)) == pdTRUE) {
         samples_[idx] = Sample{};
+        xSemaphoreGive(mutex_);
+    }
+}
+
+void DataStore::markNotSupported(Metric m) {
+    const auto idx = static_cast<size_t>(m);
+    if (idx >= static_cast<size_t>(Metric::Count_)) return;
+    if (!mutex_) return;
+    if (xSemaphoreTake(mutex_, pdMS_TO_TICKS(10)) == pdTRUE) {
+        samples_[idx].supported  = false;
+        samples_[idx].updated_ms = now_ms();
+        xSemaphoreGive(mutex_);
+    }
+}
+
+void DataStore::clearSupportFlags() {
+    if (!mutex_) return;
+    if (xSemaphoreTake(mutex_, pdMS_TO_TICKS(10)) == pdTRUE) {
+        for (auto& s : samples_) {
+            s.supported = true;
+        }
         xSemaphoreGive(mutex_);
     }
 }
