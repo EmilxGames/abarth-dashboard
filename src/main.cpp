@@ -28,25 +28,26 @@
 
 static constexpr const char* TAG = "main";
 
-// Diagnostica: tutti i Serial.printf qui bypassano CORE_DEBUG_LEVEL e si vedono
-// sempre sul monitor seriale a 115200.  Utile per isolare i reset HP_SYS_HP_WDT
-// quando il device riparte prima che le normali ESP_LOGI vengano mostrate.
-#define DIAG(fmt, ...) do { Serial.printf("[DIAG] " fmt "\n", ##__VA_ARGS__); Serial.flush(); } while (0)
+// Diagnostica: usiamo ESP_LOGI invece di Serial.printf perche' su ESP32-P4 il
+// pio device monitor legge lo stream della USB Serial JTAG (stesso canale di
+// ESP_LOG) mentre Serial.printf finisce su UART0 (pin fisici), non connesso
+// alla USB-C del Guition.  Richiede CORE_DEBUG_LEVEL>=3 in platformio.ini.
+#define DIAG(fmt, ...) ESP_LOGI(TAG, "[DIAG] " fmt, ##__VA_ARGS__)
 
 static void heartbeat_task(void* /*arg*/) {
-    // Task separato, pin su entrambi i core liberamente.  Se questo heartbeat
-    // smette di comparire vuol dire che lo scheduler e' bloccato.
+    // Task separato, pinnato su entrambi i core liberamente.  Se questo
+    // heartbeat smette di comparire vuol dire che lo scheduler e' bloccato.
     uint32_t tick = 0;
     while (true) {
         const uint64_t uptime_ms = esp_timer_get_time() / 1000ULL;
         const size_t   heap_kb   = esp_get_free_heap_size() / 1024;
         const size_t   psram_kb  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024;
-        Serial.printf("[BEAT] #%lu uptime=%llums heap=%uK psram=%uK\n",
-                      static_cast<unsigned long>(tick++),
-                      uptime_ms,
-                      static_cast<unsigned>(heap_kb),
-                      static_cast<unsigned>(psram_kb));
-        Serial.flush();
+        ESP_LOGI(TAG,
+                 "[BEAT] #%lu uptime=%llums heap=%uK psram=%uK",
+                 static_cast<unsigned long>(tick++),
+                 uptime_ms,
+                 static_cast<unsigned>(heap_kb),
+                 static_cast<unsigned>(psram_kb));
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
