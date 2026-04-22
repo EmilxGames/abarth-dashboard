@@ -92,26 +92,41 @@ void setup() {
     abarth::ui::splash::show();
     abarth::ui::splash::setStatus("Avvio modulo OBD...");
 
+    // ---- Modalita' diagnostica: attiva i bypass con -D nel platformio.ini.
+    //      Ogni bypass rimuove un sospettato dalla catena per isolare chi
+    //      triggera l'HP_WDT ~4s dopo che la UI principale diventa attiva.
+#ifndef ABARTH_DIAG_SKIP_OBD
     DIAG("step: OBD start");
     if (!abarth::obd::obd().start()) {
         DIAG("ERRORE OBD start");
     }
+#else
+    DIAG("step: OBD start SKIPPED (ABARTH_DIAG_SKIP_OBD)");
+#endif
 
     DIAG("step: splash hold 1200ms");
     delay(1200);
     abarth::ui::splash::setStatus("Costruzione interfaccia...");
 
+#ifndef ABARTH_DIAG_SKIP_UI
     DIAG("step: ui::build");
     abarth::ui::build();
     DIAG("ui::build OK");
+#else
+    DIAG("step: ui::build SKIPPED (ABARTH_DIAG_SKIP_UI)");
+#endif
 
     abarth::ui::splash::setStatus("Pronto.");
 
     DIAG("step: splash hold finale 2200ms");
     delay(2200);
 
+#ifndef ABARTH_DIAG_KEEP_SPLASH
     DIAG("step: splash dismiss");
     abarth::ui::splash::dismiss();
+#else
+    DIAG("step: splash dismiss SKIPPED (ABARTH_DIAG_KEEP_SPLASH)");
+#endif
 
     DIAG("*** setup completato, entro in loop() ***");
 }
