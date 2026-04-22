@@ -28,11 +28,12 @@
 
 static constexpr const char* TAG = "main";
 
-// Diagnostica: usiamo ESP_LOGI invece di Serial.printf perche' su ESP32-P4 il
-// pio device monitor legge lo stream della USB Serial JTAG (stesso canale di
-// ESP_LOG) mentre Serial.printf finisce su UART0 (pin fisici), non connesso
-// alla USB-C del Guition.  Richiede CORE_DEBUG_LEVEL>=3 in platformio.ini.
-#define DIAG(fmt, ...) ESP_LOGI(TAG, "[DIAG] " fmt, ##__VA_ARGS__)
+// Diagnostica: usiamo printf() diretto (come fa la libreria esp_panel con
+// ESP_UTILS_LOGI) perche' ne' Serial.printf ne' ESP_LOGI finiscono sulla USB
+// Serial JTAG del Guition JC1060P470C in questa configurazione.  printf() su
+// ESP32-P4 Arduino e' instradato su stdout che il device monitor legge
+// (infatti i log [I][Panel] arrivano).
+#define DIAG(fmt, ...) do { printf("[I][main] [DIAG] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } while (0)
 
 static void heartbeat_task(void* /*arg*/) {
     // Task separato, pinnato su entrambi i core liberamente.  Se questo
@@ -42,12 +43,12 @@ static void heartbeat_task(void* /*arg*/) {
         const uint64_t uptime_ms = esp_timer_get_time() / 1000ULL;
         const size_t   heap_kb   = esp_get_free_heap_size() / 1024;
         const size_t   psram_kb  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024;
-        ESP_LOGI(TAG,
-                 "[BEAT] #%lu uptime=%llums heap=%uK psram=%uK",
-                 static_cast<unsigned long>(tick++),
-                 uptime_ms,
-                 static_cast<unsigned>(heap_kb),
-                 static_cast<unsigned>(psram_kb));
+        printf("[I][main] [BEAT] #%lu uptime=%llums heap=%uK psram=%uK\n",
+               static_cast<unsigned long>(tick++),
+               uptime_ms,
+               static_cast<unsigned>(heap_kb),
+               static_cast<unsigned>(psram_kb));
+        fflush(stdout);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
