@@ -165,7 +165,8 @@ const PidSpec kStandardPids[] = {
         dec_lambda_afr,
     },
 };
-const size_t kStandardPidsCount = sizeof(kStandardPids) / sizeof(kStandardPids[0]);
+static_assert(sizeof(kStandardPids) / sizeof(kStandardPids[0]) == kStandardPidsCount,
+              "aggiorna kStandardPidsCount in pids.h se aggiungi/rimuovi PID");
 
 /*
  * PID Mode 22 (local identifier 16 bit).
@@ -191,7 +192,8 @@ const PidSpec kAbarthCustomPids[] = {
         dec_fiat_boost_rel_bar,
     },
 };
-const size_t kAbarthCustomPidsCount = sizeof(kAbarthCustomPids) / sizeof(kAbarthCustomPids[0]);
+static_assert(sizeof(kAbarthCustomPids) / sizeof(kAbarthCustomPids[0]) == kAbarthCustomPidsCount,
+              "aggiorna kAbarthCustomPidsCount in pids.h se aggiungi/rimuovi PID");
 
 /* === Parsing ============================================================= */
 

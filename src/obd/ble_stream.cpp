@@ -2,6 +2,7 @@
 
 #include <esp_log.h>
 
+#include <algorithm>
 #include <cstring>
 
 namespace abarth::obd {
@@ -9,6 +10,8 @@ namespace abarth::obd {
 namespace {
 constexpr const char* TAG = "ble_stream";
 }  // namespace
+
+#if ABARTH_HAS_BLE
 
 class BleStream::ClientCallbacks : public NimBLEClientCallbacks {
 public:
@@ -48,7 +51,6 @@ bool BleStream::begin(const BleStreamConfig& cfg) {
     }
     if (!initialized_.load()) {
         NimBLEDevice::init("abarth-dashboard");
-        NimBLEDevice::setPower(ESP_PWR_LVL_P9);
         NimBLEDevice::setMTU(247);
         initialized_.store(true);
     }
@@ -185,5 +187,41 @@ size_t BleStream::readUntil(char terminator, char* out, size_t out_max, uint32_t
 void BleStream::flushRx() {
     if (rx_buf_) xStreamBufferReset(rx_buf_);
 }
+
+#else  // !ABARTH_HAS_BLE  --- implementazione stub ------------------------------
+
+BleStream::BleStream()  = default;
+BleStream::~BleStream() = default;
+
+bool BleStream::begin(const BleStreamConfig& cfg) {
+    cfg_ = cfg;
+    ESP_LOGW(TAG, "BLE disabilitato in build: il dongle OBD non verra' contattato.");
+    ESP_LOGW(TAG, "Su ESP32-P4 serve un host BLE via esp_hosted + ESP32-C6 (non ancora in arduino-esp32 3.1.x).");
+    initialized_.store(true);
+    return true;
+}
+
+bool BleStream::connect() {
+    return false;
+}
+
+void BleStream::disconnect() {
+    connected_.store(false);
+}
+
+size_t BleStream::write(const uint8_t*, size_t) { return 0; }
+size_t BleStream::write(const char*)            { return 0; }
+
+size_t BleStream::readUntil(char /*terminator*/, char* out, size_t out_max,
+                            uint32_t timeout_ms) {
+    if (out_max == 0) return 0;
+    vTaskDelay(pdMS_TO_TICKS(timeout_ms));
+    out[0] = '\0';
+    return 0;
+}
+
+void BleStream::flushRx() {}
+
+#endif  // ABARTH_HAS_BLE
 
 }  // namespace abarth::obd

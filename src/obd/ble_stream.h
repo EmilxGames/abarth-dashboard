@@ -2,7 +2,7 @@
 
 /**
  * @file ble_stream.h
- * @brief Wrapper BLE (NimBLE) che espone una semplice interfaccia stream.
+ * @brief Wrapper BLE che espone una semplice interfaccia stream.
  *
  * L'ESP32-P4 tramite il co-processore ESP32-C6 supporta solo Bluetooth LE
  * (niente Bluetooth Classic / SPP). I dongle come vLinker FD, OBDLink CX e
@@ -12,12 +12,14 @@
  *   - 0xFFF1 : NOTIFY (dati da dongle -> host)
  *   - 0xFFF2 : WRITE  (comandi AT/OBD da host -> dongle)
  *
- * Questa classe nasconde la complessita' di NimBLE: dopo `connect()` si
- * possono usare `write()` / `readLine()` come fosse una seriale.
+ * Nota: Arduino-ESP32 3.1.1 al momento non include i symboli NimBLE per
+ * ESP32-P4 (il BT va via esp_hosted -> ESP32-C6). Finche' non e' pronto,
+ * compilando con `-DABARTH_HAS_BLE=0` il backend diventa uno stub che
+ * finge un errore di connessione: l'UI parte e mostra "Dongle non trovato",
+ * ma non si interroga l'auto. Vedi README sezione "Stato del supporto BLE".
  */
 
 #include <Arduino.h>
-#include <NimBLEDevice.h>
 
 #include <atomic>
 #include <string>
@@ -25,6 +27,20 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
+
+#ifndef ABARTH_HAS_BLE
+// Default: sui target ESP32-P4 NimBLE non e' ancora supportato dai pacchetti
+// arduino-esp32 3.1.x (manca l'host nimble). Disabilitiamo per costruire.
+#if CONFIG_IDF_TARGET_ESP32P4
+#define ABARTH_HAS_BLE 0
+#else
+#define ABARTH_HAS_BLE 1
+#endif
+#endif
+
+#if ABARTH_HAS_BLE
+#include <NimBLEDevice.h>
+#endif
 
 namespace abarth::obd {
 
@@ -72,6 +88,7 @@ public:
 
     const BleStreamConfig& config() const { return cfg_; }
 
+#if ABARTH_HAS_BLE
 private:
     /// Callback invocato da NimBLE sulle notifiche di 0xFFF1.
     void onNotify(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool /*isNotify*/);
@@ -79,10 +96,13 @@ private:
     class ClientCallbacks;
     friend class ClientCallbacks;
 
-    BleStreamConfig              cfg_{};
     NimBLEClient*                client_          = nullptr;
     NimBLERemoteCharacteristic*  notify_char_     = nullptr;
     NimBLERemoteCharacteristic*  write_char_      = nullptr;
+#endif
+
+private:
+    BleStreamConfig              cfg_{};
     StreamBufferHandle_t         rx_buf_          = nullptr;
     std::atomic<bool>            connected_{false};
     std::atomic<bool>            initialized_{false};

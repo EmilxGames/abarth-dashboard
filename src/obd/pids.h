@@ -51,12 +51,12 @@ struct PidSpec {
 /* === PID standard OBDII (Mode 01) ---------------------------------------- */
 
 extern const PidSpec kStandardPids[];
-extern const size_t  kStandardPidsCount;
+inline constexpr size_t kStandardPidsCount = 11;
 
 /* === PID custom Abarth/Fiat (Mode 22) ------------------------------------ */
 
 extern const PidSpec kAbarthCustomPids[];
-extern const size_t  kAbarthCustomPidsCount;
+inline constexpr size_t kAbarthCustomPidsCount = 3;
 
 /* === Utility di parsing -------------------------------------------------- */
 
