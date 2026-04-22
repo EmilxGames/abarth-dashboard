@@ -1,7 +1,9 @@
 #include "ui/splash.h"
 
 #include <lvgl.h>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_system.h>
 
 #include <cstring>
 
@@ -21,7 +23,8 @@ int32_t g_progress = 0;
 
 void progress_cb(lv_timer_t* /*t*/) {
     if (!g_bar) return;
-    g_progress += 2;
+    // 1% ogni 40 ms -> pieno in 4 s circa, coerente con il tempo di boot reale.
+    g_progress += 1;
     if (g_progress > 100) g_progress = 100;
     lv_bar_set_value(g_bar, g_progress, LV_ANIM_ON);
 }
@@ -105,6 +108,34 @@ void show() {
     lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_16, 0);
     lv_obj_align(subtitle, LV_ALIGN_CENTER, 0, 180);
 
+    /* ----------- Blocco info build / sistema (in alto a sinistra / destra) */
+    lv_obj_t* info_l = lv_label_create(g_screen);
+    lv_label_set_text_fmt(
+        info_l,
+        "Firmware: abarth-dashboard\n"
+        "Build: %s %s\n"
+        "LVGL: %d.%d.%d",
+        __DATE__, __TIME__,
+        LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
+    lv_obj_set_style_text_color(info_l, lv_color_hex(0x6A6A74), 0);
+    lv_obj_set_style_text_font(info_l, &lv_font_montserrat_14, 0);
+    lv_obj_align(info_l, LV_ALIGN_TOP_LEFT, 24, 24);
+
+    lv_obj_t* info_r = lv_label_create(g_screen);
+    const size_t heap_kb  = esp_get_free_heap_size() / 1024;
+    const size_t psram_kb = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024;
+    lv_label_set_text_fmt(
+        info_r,
+        "Board:   Guition JC1060P470C\n"
+        "SoC:     ESP32-P4 @ 360 MHz\n"
+        "Heap:    %u KB  PSRAM: %u KB",
+        static_cast<unsigned>(heap_kb),
+        static_cast<unsigned>(psram_kb));
+    lv_obj_set_style_text_color(info_r, lv_color_hex(0x6A6A74), 0);
+    lv_obj_set_style_text_font(info_r, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_align(info_r, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_align(info_r, LV_ALIGN_TOP_RIGHT, -24, 24);
+
     /* ----------- Barra di caricamento ----------------------------------- */
     g_bar = lv_bar_create(g_screen);
     lv_obj_set_size(g_bar, 420, 6);
@@ -127,7 +158,7 @@ void show() {
     /* Attiva lo screen e parti col timer di avanzamento */
     lv_scr_load(g_screen);
     g_progress = 0;
-    g_progress_tmr = lv_timer_create(progress_cb, 60, nullptr);
+    g_progress_tmr = lv_timer_create(progress_cb, 40, nullptr);
 
     lvgl_port_unlock();
 }

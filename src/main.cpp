@@ -14,7 +14,10 @@
  */
 
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 
 #include "config/settings.h"
 #include "data/data_store.h"
@@ -29,6 +32,8 @@ void setup() {
     Serial.begin(115200);
     delay(200);
     ESP_LOGI(TAG, "*** Abarth Dashboard booting ***");
+    // Motivo dell'ultimo reset: utile per diagnosticare loop di reboot.
+    ESP_LOGI(TAG, "reset reason: %d", static_cast<int>(esp_reset_reason()));
 
     if (!abarth::data::store().init()) {
         ESP_LOGE(TAG, "data store init fallito");
@@ -45,25 +50,47 @@ void setup() {
         static_cast<int>(abarth::settings::current().brightness));
 
     abarth::ui::splash::show();
-
     abarth::ui::splash::setStatus("Avvio modulo OBD...");
+
     if (!abarth::obd::obd().start()) {
         ESP_LOGE(TAG, "impossibile avviare task OBD");
     }
 
-    // Lasciamo qualche centinaio di ms di splash per dare tempo al task OBD
-    // di fare un primo giro di scansione BLE, poi passiamo alla UI reale.
-    delay(2000);
+    // Diamo qualche istante allo splash per partire e al task OBD per fare
+    // il primo tentativo di scan BLE.
+    delay(1200);
+    abarth::ui::splash::setStatus("Costruzione interfaccia...");
 
-    abarth::ui::splash::setStatus("Caricamento dashboard...");
+    // Costruzione UI principale: prende il lock LVGL, crea tutti i widget e
+    // carica lo screen nuovo (tipicamente 200-400 ms).
     abarth::ui::build();
+
+    abarth::ui::splash::setStatus("Pronto.");
+
+    // Attesa finale per far godere lo splash prima del tabview principale.
+    // Totale splash visibile: ~4 s, coerente con la barra di progresso.
+    delay(2200);
     abarth::ui::splash::dismiss();
 
     ESP_LOGI(TAG, "setup completato");
 }
 
 void loop() {
-    // LVGL gira in un suo task interno (configurato dal port).
-    // Il task OBD gira su core 1.
+    // Heartbeat di diagnostica: stampa heap/psram/uptime ogni 10 s in modo
+    // che da seriale si possa capire se il board e' stabile o riparte.
+    static uint32_t last_log_s = 0;
+    const uint64_t uptime_s = esp_timer_get_time() / 1000000ULL;
+    if (uptime_s - last_log_s >= 10) {
+        last_log_s = static_cast<uint32_t>(uptime_s);
+        const size_t free_heap  = esp_get_free_heap_size();
+        const size_t min_heap   = esp_get_minimum_free_heap_size();
+        const size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        ESP_LOGI(TAG,
+                 "heartbeat uptime=%llus heap=%u (min %u) psram=%u",
+                 uptime_s,
+                 static_cast<unsigned>(free_heap),
+                 static_cast<unsigned>(min_heap),
+                 static_cast<unsigned>(free_psram));
+    }
     delay(1000);
 }

@@ -187,7 +187,7 @@ void build(lv_obj_t* tab) {
     const auto& s = settings::current();
 
     /* --- Luminosita' ----------------------------------------------------- */
-    lv_obj_t* sec_bl = make_section(tab, "Luminosità");
+    lv_obj_t* sec_bl = make_section(tab, "Luminosita'");
     lv_obj_t* row    = lv_obj_create(sec_bl);
     lv_obj_remove_style_all(row);
     lv_obj_set_width(row, LV_PCT(100));
@@ -213,9 +213,9 @@ void build(lv_obj_t* tab) {
     lv_label_set_text(g_lbl_brightness_value, buf);
 
     /* --- Unita' ---------------------------------------------------------- */
-    lv_obj_t* sec_u = make_section(tab, "Unità di misura");
+    lv_obj_t* sec_u = make_section(tab, "Unita' di misura");
 
-    static const char* temp_opts[] = {"°C", "°F", ""};
+    static const char* temp_opts[] = {"C", "F", ""};
     lv_obj_t* btnm_t = lv_btnmatrix_create(sec_u);
     lv_obj_set_size(btnm_t, LV_PCT(100), 50);
     lv_btnmatrix_set_map(btnm_t, temp_opts);
@@ -343,8 +343,16 @@ void build(lv_obj_t* tab) {
 }
 
 void tick() {
-    // Orologio.
-    if (g_lbl_clock) {
+    // Il tick viene chiamato dal timer UI principale (10 Hz). Qui rinfreschiamo
+    // solo campi che cambiano di secondo in secondo, evitando di generare
+    // pressione inutile su heap LVGL.
+    static int64_t last_clock_ms   = 0;
+    static int64_t last_sysinfo_ms = 0;
+    const int64_t  now_ms          = esp_timer_get_time() / 1000;
+
+    // Orologio: aggiorna 1 volta al secondo.
+    if (g_lbl_clock && (now_ms - last_clock_ms) >= 1000) {
+        last_clock_ms = now_ms;
         time_t now = time(nullptr);
         struct tm ti;
         localtime_r(&now, &ti);
@@ -352,7 +360,7 @@ void tick() {
         if (ti.tm_year + 1900 < 2024) {
             std::snprintf(buf, sizeof(buf),
                           "Non impostata (uptime %lu s)",
-                          static_cast<unsigned long>(esp_timer_get_time() / 1000000));
+                          static_cast<unsigned long>(now_ms / 1000));
         } else {
             std::snprintf(buf, sizeof(buf),
                           "%04d/%02d/%02d %02d:%02d",
@@ -362,12 +370,14 @@ void tick() {
         lv_label_set_text(g_lbl_clock, buf);
     }
 
-    // Info sistema.
-    if (g_lbl_sysinfo) {
+    // Info sistema: aggiorna ogni 2 secondi (lettura heap/PSRAM non e'
+    // gratuita e il dato e' visibile solo in tab Impostazioni).
+    if (g_lbl_sysinfo && (now_ms - last_sysinfo_ms) >= 2000) {
+        last_sysinfo_ms = now_ms;
         char buf[256];
         const size_t free_heap = esp_get_free_heap_size();
         const size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-        const uint64_t uptime_s = esp_timer_get_time() / 1000000ULL;
+        const uint64_t uptime_s = now_ms / 1000;
         std::snprintf(
             buf, sizeof(buf),
             "Firmware:  abarth-dashboard %s %s\n"
