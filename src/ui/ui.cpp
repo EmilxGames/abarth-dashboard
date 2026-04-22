@@ -394,7 +394,12 @@ void build() {
     settings_tab::build(t_set);
 
     /* Timer periodico UI --------------------------------------------------- */
+#ifndef ABARTH_DIAG_NO_UI_TIMER
     lv_timer_create(on_tick, abarth::config::kUiUpdateMs, nullptr);
+#else
+    printf("[I][ui] [DIAG] on_tick timer NON creato (ABARTH_DIAG_NO_UI_TIMER)\n");
+    fflush(stdout);
+#endif
 
     lv_scr_load(scr);
     lvgl_port_unlock();
