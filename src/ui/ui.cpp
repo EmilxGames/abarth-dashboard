@@ -39,6 +39,13 @@ struct Card {
     lv_obj_t*   value_label;
     lv_obj_t*   unit_label;
     lv_obj_t*   title_label;
+    // Cache per evitare writeback LVGL quando il testo/stile non cambia.
+    // Ogni chiamata a lv_label_set_text fa strdup interno e marca dirty
+    // l'area; ogni lv_obj_add_style/remove_style scorre la lista stili.
+    // Farlo 22x ogni 100 ms saturava la pipeline DSI -> HP_WDT.
+    char        prev_value_text[32];
+    const char* prev_unit_ptr;    ///< ultimo puntatore stringa unit impostato
+    bool        value_muted;      ///< stile corrente: true=muted, false=value
 };
 
 std::array<Card, 32> g_cards;
@@ -100,6 +107,9 @@ Card& add_card(lv_obj_t* parent, Metric m, const char* title,
     c.unit_str = unit;
     c.decimals = decimals;
     c.kind     = kind;
+    c.prev_value_text[0] = '\0';
+    c.prev_unit_ptr      = nullptr;
+    c.value_muted        = false;   // add_card attacca style_value (non muted)
 
     lv_obj_t* cont = lv_obj_create(parent);
     lv_obj_remove_style_all(cont);
@@ -202,31 +212,40 @@ void apply_value_style(lv_obj_t* label, bool is_real_value) {
     }
 }
 
+const char* card_unit_symbol(const Card& c) {
+    switch (c.kind) {
+        case ValueKind::TempC:    return settings::tempUnitSymbol();
+        case ValueKind::SpeedKmh: return settings::speedUnitSymbol();
+        case ValueKind::Generic:  return c.unit_str;
+    }
+    return c.unit_str;
+}
+
 void refresh_card_unit(Card& c) {
     if (!c.unit_label) return;
-    switch (c.kind) {
-        case ValueKind::TempC:
-            lv_label_set_text(c.unit_label, settings::tempUnitSymbol());
-            break;
-        case ValueKind::SpeedKmh:
-            lv_label_set_text(c.unit_label, settings::speedUnitSymbol());
-            break;
-        case ValueKind::Generic:
-            lv_label_set_text(c.unit_label, c.unit_str);
-            break;
-    }
+    const char* sym = card_unit_symbol(c);
+    if (sym == c.prev_unit_ptr) return;   // puntatori statici: stesso => stesso testo
+    c.prev_unit_ptr = sym;
+    lv_label_set_text(c.unit_label, sym);
 }
 
 void update_header_clock() {
     if (!g_time_label) return;
+    static int  last_hh_mm = -2;   // -1 = "vuoto" gia' impostato; -2 = mai
     time_t now = time(nullptr);
     struct tm ti;
     localtime_r(&now, &ti);
-    char buf[16];
     if (ti.tm_year + 1900 < 2024) {
-        lv_label_set_text(g_time_label, "");  // orologio non impostato
+        if (last_hh_mm != -1) {
+            lv_label_set_text(g_time_label, "");
+            last_hh_mm = -1;
+        }
         return;
     }
+    const int hh_mm = ti.tm_hour * 60 + ti.tm_min;
+    if (hh_mm == last_hh_mm) return;   // stesso minuto: nessun write LVGL
+    last_hh_mm = hh_mm;
+    char buf[16];
     std::snprintf(buf, sizeof(buf), "%02d:%02d", ti.tm_hour, ti.tm_min);
     lv_label_set_text(g_time_label, buf);
 }
@@ -242,37 +261,53 @@ void on_tick(lv_timer_t* /*t*/) {
                static_cast<long long>(now_ms));
         fflush(stdout);
     }
-#ifndef ABARTH_DIAG_NO_TICK_CARDS
     char buf[32];
     for (size_t i = 0; i < g_card_count; ++i) {
         Card& c = g_cards[i];
         if (!c.value_label) continue;
         Sample s = abarth::data::store().get(c.metric);
-        const bool real = format_value(c, s, buf, sizeof(buf), now_ms);
-        lv_label_set_text(c.value_label, buf);
-        apply_value_style(c.value_label, real);
+        const bool real  = format_value(c, s, buf, sizeof(buf), now_ms);
+        const bool muted = !real;
+        // 1) testo: scrivi solo se differente dal precedente.
+        if (std::strncmp(buf, c.prev_value_text, sizeof(c.prev_value_text)) != 0) {
+            std::strncpy(c.prev_value_text, buf, sizeof(c.prev_value_text) - 1);
+            c.prev_value_text[sizeof(c.prev_value_text) - 1] = '\0';
+            lv_label_set_text(c.value_label, buf);
+        }
+        // 2) stile: add/remove solo quando il flag muted cambia davvero.
+        if (muted != c.value_muted) {
+            c.value_muted = muted;
+            apply_value_style(c.value_label, real);
+        }
+        // 3) unit: refresh solo se il puntatore statico cambia (switch tra °C/°F, km/h/mph).
         refresh_card_unit(c);
     }
-#endif
 
-#ifndef ABARTH_DIAG_NO_TICK_HEADER
+    // Header: writeback solo se cambia stringa.
     if (g_state_label) {
-        lv_label_set_text(g_state_label,
-                          abarth::obd::stateName(abarth::obd::obd().state()));
+        static const char* last_state_txt = nullptr;
+        const char* s = abarth::obd::stateName(abarth::obd::obd().state());
+        if (s != last_state_txt) {
+            last_state_txt = s;
+            lv_label_set_text(g_state_label, s);
+        }
     }
     if (g_counters_label) {
-        char tmp[64];
-        std::snprintf(tmp, sizeof(tmp), "OK %lu  /  ERR %lu",
-                      static_cast<unsigned long>(abarth::obd::obd().successfulReads()),
-                      static_cast<unsigned long>(abarth::obd::obd().failedReads()));
-        lv_label_set_text(g_counters_label, tmp);
+        static uint32_t last_ok = UINT32_MAX, last_err = UINT32_MAX;
+        const uint32_t ok  = abarth::obd::obd().successfulReads();
+        const uint32_t err = abarth::obd::obd().failedReads();
+        if (ok != last_ok || err != last_err) {
+            last_ok = ok; last_err = err;
+            char tmp[64];
+            std::snprintf(tmp, sizeof(tmp), "OK %lu  /  ERR %lu",
+                          static_cast<unsigned long>(ok),
+                          static_cast<unsigned long>(err));
+            lv_label_set_text(g_counters_label, tmp);
+        }
     }
     update_header_clock();
-#endif
 
-#ifndef ABARTH_DIAG_NO_TICK_SETTINGS
     settings_tab::tick();
-#endif
 }
 
 }  // namespace
