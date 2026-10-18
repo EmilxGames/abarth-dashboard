@@ -1,0 +1,14 @@
+dependencies:
+  idf:
+    version: '>=5.4.0'
+  lvgl/lvgl:
+    version: ~8.4.0
+  espressif/esp_lcd_touch_gt911:
+    version: '~1.2.0'
+  espressif/esp_lcd_jd9165:
+    version: '~2.0.0'
+  espressif/esp32_display_panel:
+    version: '~1.0.3'
+  espressif/esp_hosted:
+    version: '~2.12.0'
+  h2zero/esp-nimble-cpp: '*'
