@@ -96,8 +96,8 @@ void show() {
     }
 
     if (custom_bg_path) {
-        lv_obj_t* bg_img = lv_img_create(g_screen);
-        lv_img_set_src(bg_img, custom_bg_path);
+        lv_obj_t* bg_img = lv_image_create(g_screen);
+        lv_image_set_src(bg_img, custom_bg_path);
         lv_obj_center(bg_img);
         lv_obj_clear_flag(bg_img, LV_OBJ_FLAG_CLICKABLE);
 
@@ -155,7 +155,8 @@ void show() {
     lv_obj_clear_flag(disc, LV_OBJ_FLAG_CLICKABLE);
 
     // Arco da corsa animato rotante attorno allo scudetto
-    lv_obj_t* spinner = lv_spinner_create(g_screen, 2200, 75);
+    lv_obj_t* spinner = lv_spinner_create(g_screen);
+    lv_spinner_set_anim_params(spinner, 2200, 75);
     lv_obj_set_size(spinner, 220, 220);
     lv_obj_align(spinner, LV_ALIGN_CENTER, 0, badge_y_offset);
     lv_obj_set_style_arc_color(spinner, lv_color_hex(0x181824), LV_PART_MAIN);
@@ -165,11 +166,11 @@ void show() {
     lv_obj_clear_flag(spinner, LV_OBJ_FLAG_CLICKABLE);
 
     // Emblema Scudetto Abarth Ufficiale (da MicroSD se presente o da Flash interna)
-    lv_obj_t* emblem = lv_img_create(g_screen);
+    lv_obj_t* emblem = lv_image_create(g_screen);
     if (abarth::storage::sd().isMounted()) {
-        lv_img_set_src(emblem, "S:/icons/abarth_splash.png");
+        lv_image_set_src(emblem, "S:/icons/abarth_splash.png");
     } else {
-        lv_img_set_src(emblem, &g_abarth_splash_img_dsc);
+        lv_image_set_src(emblem, &g_abarth_splash_img_dsc);
     }
     lv_obj_align(emblem, LV_ALIGN_CENTER, 0, badge_y_offset);
     lv_obj_clear_flag(emblem, LV_OBJ_FLAG_CLICKABLE);

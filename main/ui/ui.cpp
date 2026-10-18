@@ -29,8 +29,8 @@ using abarth::data::Sample;
 
 // --- Helper per disegno vettoriale sui canvas degli sfondi procedurali ---
 // Disegna un "punto spesso" (per segmenti/curve) su un buffer RGB565.
-inline void drawSeg_helper(lv_color_t* cbuf, int W, int H,
-                            float px, float py, float w, lv_color_t color) {
+inline void drawSeg_helper(uint16_t* cbuf, int W, int H,
+                            float px, float py, float w, uint16_t color) {
     int ir = (int)(w + 1);
     int icx = (int)(px);
     int icy = (int)(py);
@@ -47,9 +47,9 @@ inline void drawSeg_helper(lv_color_t* cbuf, int W, int H,
     }
 }
 // Variante: disegna direttamente un segmento tra due punti.
-inline void drawSeg_helper2(lv_color_t* cbuf, int W, int H,
+inline void drawSeg_helper2(uint16_t* cbuf, int W, int H,
                              float x0, float y0, float x1, float y1,
-                             float w, lv_color_t color) {
+                             float w, uint16_t color) {
     float dx = x1 - x0, dy = y1 - y0;
     int steps = (int)(sqrtf(dx * dx + dy * dy) + 1);
     for (int s = 0; s <= steps; ++s) {
@@ -1393,8 +1393,8 @@ void build() {
         // --- Procedural Carbon Fiber 2x2 Twill Weave (full-screen canvas) ---
         const int W = LV_HOR_RES;
         const int H = LV_VER_RES;
-        lv_color_t* cbuf = (lv_color_t*)heap_caps_malloc(
-            W * H * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+        uint16_t* cbuf = (uint16_t*)heap_caps_malloc(
+            W * H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 
         if (cbuf) {
             // Strand width in pixels (each fiber bundle)
@@ -1441,12 +1441,12 @@ void build() {
                         if (bright > 44) bright = 44;
                     }
 
-                    cbuf[y * W + x] = lv_color_make(bright, bright, bright);
+                    cbuf[y * W + x] = lv_color_to_u16(lv_color_make(bright, bright, bright));
                 }
             }
 
             lv_obj_t* canvas = lv_canvas_create(scr);
-            lv_canvas_set_buffer(canvas, cbuf, W, H, LV_IMG_CF_TRUE_COLOR);
+            lv_canvas_set_buffer(canvas, cbuf, W, H, LV_COLOR_FORMAT_RGB565);
             lv_obj_set_pos(canvas, 0, 0);
             lv_obj_add_flag(canvas, LV_OBJ_FLAG_FLOATING);
             lv_obj_move_to_index(canvas, 0);
@@ -1457,8 +1457,8 @@ void build() {
         // --- Bandiera a scacchi racing (top half) + nero (bottom half) ---
         const int W = LV_HOR_RES;
         const int H = LV_VER_RES;
-        lv_color_t* cbuf = (lv_color_t*)heap_caps_malloc(
-            W * H * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+        uint16_t* cbuf = (uint16_t*)heap_caps_malloc(
+            W * H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         if (cbuf) {
             const int sq = 48;             // lato cella
             const int half = H / 2;        // meta' superiore a scacchi
@@ -1481,11 +1481,11 @@ void build() {
                         uint8_t v = 6 + (uint8_t)(((y - half) * 8) / (H - half));
                         c = lv_color_make(v, v, v + 2);
                     }
-                    cbuf[y * W + x] = c;
+                    cbuf[y * W + x] = lv_color_to_u16(c);
                 }
             }
             lv_obj_t* canvas = lv_canvas_create(scr);
-            lv_canvas_set_buffer(canvas, cbuf, W, H, LV_IMG_CF_TRUE_COLOR);
+            lv_canvas_set_buffer(canvas, cbuf, W, H, LV_COLOR_FORMAT_RGB565);
             lv_obj_set_pos(canvas, 0, 0);
             lv_obj_add_flag(canvas, LV_OBJ_FLAG_FLOATING);
             lv_obj_move_to_index(canvas, 0);
@@ -1494,8 +1494,8 @@ void build() {
         // --- Tricolore italiano sfumato soft (verde-bianco-rosso in trasparenza) ---
         const int W = LV_HOR_RES;
         const int H = LV_VER_RES;
-        lv_color_t* cbuf = (lv_color_t*)heap_caps_malloc(
-            W * H * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+        uint16_t* cbuf = (uint16_t*)heap_caps_malloc(
+            W * H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         if (cbuf) {
             // Tre fasce verticali con sfumatura orizzontale molto soft.
             // Bandiera reale: 1/3 verde, 1/3 bianco, 1/3 rosso.
@@ -1503,32 +1503,31 @@ void build() {
             for (int y = 0; y < H; y++) {
                 for (int x = 0; x < W; x++) {
                     float fx = (float)x / (float)W;  // 0..1
-                    lv_color_t c;
+                    uint8_t r = 0, g = 0, b = 0;
                     if (fx < 0.34f) {
                         // Verde scuro Abarth (#0a3d1f)
-                        uint8_t g = 18 + (uint8_t)(8.0f * (1.0f - fabsf(fx - 0.17f) * 3.0f));
-                        c = lv_color_make(6, g, 14);
+                        g = 18 + (uint8_t)(8.0f * (1.0f - fabsf(fx - 0.17f) * 3.0f));
+                        r = 6; b = 14;
                     } else if (fx < 0.66f) {
                         // Bianco/grigio soft
                         uint8_t v = 22 + (uint8_t)(6.0f * (1.0f - fabsf(fx - 0.5f) * 3.0f));
-                        c = lv_color_make(v, v, v);
+                        r = v; g = v; b = v;
                     } else {
                         // Rosso scuro Abarth (#5a0e0e)
-                        uint8_t r = 60 + (uint8_t)(15.0f * (1.0f - fabsf(fx - 0.83f) * 3.0f));
-                        c = lv_color_make(r, 8, 10);
+                        r = 60 + (uint8_t)(15.0f * (1.0f - fabsf(fx - 0.83f) * 3.0f));
+                        g = 8; b = 10;
                     }
                     // Fondo: la luminosita' scende verso i bordi per dare profondita'
                     float vy = (float)y / (float)H;  // 0..1
                     float vignette = 1.0f - 0.35f * fabsf(vy - 0.5f) * 2.0f;
-                    c = lv_color_make(
-                        (uint8_t)(c.ch.red * 2 * vignette) & 0x1F,
-                        (uint8_t)(c.ch.green * 2 * vignette) & 0x3F,
-                        (uint8_t)(c.ch.blue * 2 * vignette) & 0x1F);
-                    cbuf[y * W + x] = c;
+                    r = (uint8_t)(r * vignette);
+                    g = (uint8_t)(g * vignette);
+                    b = (uint8_t)(b * vignette);
+                    cbuf[y * W + x] = lv_color_to_u16(lv_color_make(r, g, b));
                 }
             }
             lv_obj_t* canvas = lv_canvas_create(scr);
-            lv_canvas_set_buffer(canvas, cbuf, W, H, LV_IMG_CF_TRUE_COLOR);
+            lv_canvas_set_buffer(canvas, cbuf, W, H, LV_COLOR_FORMAT_RGB565);
             lv_obj_set_pos(canvas, 0, 0);
             lv_obj_add_flag(canvas, LV_OBJ_FLAG_FLOATING);
             lv_obj_move_to_index(canvas, 0);
@@ -1537,19 +1536,20 @@ void build() {
         // --- Scorpione Abarth watermark: disegno vettoriale stilizzato semi-trasparente ---
         const int W = LV_HOR_RES;
         const int H = LV_VER_RES;
-        lv_color_t* cbuf = (lv_color_t*)heap_caps_malloc(
-            W * H * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+        uint16_t* cbuf = (uint16_t*)heap_caps_malloc(
+            W * H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         if (cbuf) {
             // Sfondo carbonio scuro uniforme
+            uint16_t bg_col = lv_color_to_u16(lv_color_make(10, 10, 12));
             for (int i = 0; i < W * H; ++i) {
-                cbuf[i] = lv_color_make(10, 10, 12);
+                cbuf[i] = bg_col;
             }
             // Disegna scorpione stilizzato al centro (corpo + coda + zampe + chele)
             // usando primitive geometriche. Coordinate relative al centro.
             const float cx = W * 0.5f;
             const float cy = H * 0.5f;
             const float scale = (W < H ? W : H) * 0.0018f;  // scala rispetto a 1024px
-            const lv_color_t sc = lv_color_make(80, 14, 14);  // rosso scorpione semi-trasp
+            const uint16_t sc = lv_color_to_u16(lv_color_make(80, 14, 14));  // rosso scorpione semi-trasp
             // Helper: disegna un disco (cerchio pieno)
             auto drawDisc = [&](float px, float py, float r) {
                 int ir = (int)(r + 1);
@@ -1614,7 +1614,7 @@ void build() {
                 drawDisc(cx + 3.5f * U * side, cy - 4.5f * U, 1.0f * U);
             }
             lv_obj_t* canvas = lv_canvas_create(scr);
-            lv_canvas_set_buffer(canvas, cbuf, W, H, LV_IMG_CF_TRUE_COLOR);
+            lv_canvas_set_buffer(canvas, cbuf, W, H, LV_COLOR_FORMAT_RGB565);
             lv_obj_set_pos(canvas, 0, 0);
             lv_obj_add_flag(canvas, LV_OBJ_FLAG_FLOATING);
             lv_obj_move_to_index(canvas, 0);
@@ -1623,8 +1623,8 @@ void build() {
         // --- Texture asfalto da circuito: rumore grigio scuro + segnaletica ---
         const int W = LV_HOR_RES;
         const int H = LV_VER_RES;
-        lv_color_t* cbuf = (lv_color_t*)heap_caps_malloc(
-            W * H * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+        uint16_t* cbuf = (uint16_t*)heap_caps_malloc(
+            W * H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         if (cbuf) {
             // PRNG deterministico (xorshift) per riproducibilita'
             uint32_t rng = 0x1234ABCD;
@@ -1645,21 +1645,21 @@ void build() {
                     float vy = (float)y / (float)H;
                     float vig = 1.0f - 0.45f * fabsf(vy - 0.5f) * 2.0f;
                     uint8_t v = (uint8_t)(base * vig);
-                    cbuf[y * W + x] = lv_color_make(v, v, v);
+                    cbuf[y * W + x] = lv_color_to_u16(lv_color_make(v, v, v));
                 }
             }
             // Strisce di segnaletica (bianche e rosse ai bordi, tipo kerb)
             const int kerb_w = 12;
             for (int y = 0; y < H; y++) {
                 int seg = (y / 32) % 2;
-                lv_color_t kc = seg ? lv_color_make(210, 210, 210) : lv_color_make(180, 20, 20);
+                uint16_t kc = lv_color_to_u16(seg ? lv_color_make(210, 210, 210) : lv_color_make(180, 20, 20));
                 for (int x = 0; x < kerb_w; x++) {
                     cbuf[y * W + x] = kc;
                     cbuf[y * W + (W - 1 - x)] = kc;
                 }
             }
             lv_obj_t* canvas = lv_canvas_create(scr);
-            lv_canvas_set_buffer(canvas, cbuf, W, H, LV_IMG_CF_TRUE_COLOR);
+            lv_canvas_set_buffer(canvas, cbuf, W, H, LV_COLOR_FORMAT_RGB565);
             lv_obj_set_pos(canvas, 0, 0);
             lv_obj_add_flag(canvas, LV_OBJ_FLAG_FLOATING);
             lv_obj_move_to_index(canvas, 0);
@@ -1770,7 +1770,9 @@ void build() {
     g_state_label = g_conn_label;
 
     /* --- Tabview ---------------------------------------------------------- */
-    lv_obj_t* tabview = lv_tabview_create(scr, LV_DIR_TOP, 48);
+    lv_obj_t* tabview = lv_tabview_create(scr);
+    lv_tabview_set_tab_bar_position(tabview, LV_DIR_TOP);
+    lv_tabview_set_tab_bar_size(tabview, 48);
     lv_obj_set_size(tabview, LV_PCT(100), LV_VER_RES - 44);
     lv_obj_align(tabview, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_opa(tabview, LV_OPA_TRANSP, 0);

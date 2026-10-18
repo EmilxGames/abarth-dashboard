@@ -10,7 +10,7 @@ extern "C" {
 
 extern const uint8_t g_abarth_splash_png[];
 extern const size_t  g_abarth_splash_png_len;
-extern const lv_img_dsc_t g_abarth_splash_img_dsc;
+extern const lv_image_dsc_t g_abarth_splash_img_dsc;
 
 #ifdef __cplusplus
 }

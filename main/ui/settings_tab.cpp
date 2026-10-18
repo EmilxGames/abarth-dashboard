@@ -226,7 +226,7 @@ void touch_test_event_cb(lv_event_t* e) {
             lv_obj_clear_flag(g_touch_dot, LV_OBJ_FLAG_HIDDEN);
         }
         if (g_touch_coords_lbl) {
-            lv_label_set_text_fmt(g_touch_coords_lbl, "Touch: X = %d | Y = %d", p.x, p.y);
+            lv_label_set_text_fmt(g_touch_coords_lbl, "Touch: X = %d | Y = %d", (int)p.x, (int)p.y);
         }
     }
 }
@@ -3708,7 +3708,8 @@ void build(lv_obj_t* tab) {
     lv_obj_remove_style_all(g_menu_page);
     lv_obj_set_size(g_menu_page, LV_PCT(100), LV_PCT(100));
     lv_obj_set_flex_flow(g_menu_page, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_bg_opa(g_menu_page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(g_menu_page, lv_color_hex(0x0E0E14), 0);
+    lv_obj_set_style_bg_opa(g_menu_page, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_hor(g_menu_page, 16, 0);
     lv_obj_set_style_pad_top(g_menu_page, 10, 0);
     lv_obj_set_style_pad_bottom(g_menu_page, 8, 0);
@@ -3945,7 +3946,8 @@ void build(lv_obj_t* tab) {
     lv_obj_remove_style_all(g_detail_page);
     lv_obj_set_size(g_detail_page, LV_PCT(100), LV_PCT(100));
     lv_obj_set_flex_flow(g_detail_page, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_bg_opa(g_detail_page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(g_detail_page, lv_color_hex(0x0E0E14), 0);
+    lv_obj_set_style_bg_opa(g_detail_page, LV_OPA_COVER, 0);
     lv_obj_clear_flag(g_detail_page, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(g_detail_page, LV_OBJ_FLAG_HIDDEN); // Nascosta di default
 

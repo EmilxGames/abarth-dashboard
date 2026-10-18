@@ -337,23 +337,6 @@ void SDCardManager::registerLvglFsDriver() {
         }
     }
 
-    // Cache per icone decodificate in RAM (evita riletture continue da SD)
-    lv_img_cache_set_size(16);
-    ESP_LOGI(TAG, "Cache immagini LVGL impostata a 16 slot");
-
-    // DIAGNOSTICA TEST DIRETTO PNG DECODER
-    lv_img_header_t test_header;
-    lv_res_t r_info = lv_img_decoder_get_info("S:/icons/scorpion.png", &test_header);
-    ESP_LOGI(TAG, ">>> TEST lv_img_decoder_get_info('S:/icons/scorpion.png'): res=%d (w=%d, h=%d, cf=%d)",
-             (int)r_info, (int)test_header.w, (int)test_header.h, (int)test_header.cf);
-
-    lv_img_decoder_dsc_t test_dsc;
-    lv_res_t r_open = lv_img_decoder_open(&test_dsc, "S:/icons/scorpion.png", lv_color_black(), 0);
-    ESP_LOGI(TAG, ">>> TEST lv_img_decoder_open('S:/icons/scorpion.png'): res=%d (img_data=%p, err=%s)",
-             (int)r_open, test_dsc.img_data, test_dsc.error_msg ? test_dsc.error_msg : "none");
-    if (r_open == LV_RES_OK) {
-        lv_img_decoder_close(&test_dsc);
-    }
 }
 
 bool SDCardManager::logTelemetry(const char* csv_line) {

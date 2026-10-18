@@ -4624,14 +4624,18 @@ extern const uint8_t g_abarth_splash_png[] = {
 
 extern const size_t g_abarth_splash_png_len = sizeof(g_abarth_splash_png);
 
-extern const lv_img_dsc_t g_abarth_splash_img_dsc = {
+extern const lv_image_dsc_t g_abarth_splash_img_dsc = {
     .header = {
-        .cf = LV_IMG_CF_RAW_ALPHA,
-        .always_zero = 0,
-        .reserved = 0,
+        .magic = LV_IMAGE_HEADER_MAGIC,
+        .cf = LV_COLOR_FORMAT_RAW_ALPHA,
+        .flags = 0,
         .w = 165,
         .h = 180,
+        .stride = 0,
+        .reserved_2 = 0,
     },
     .data_size = sizeof(g_abarth_splash_png),
     .data = g_abarth_splash_png,
+    .reserved = NULL,
+    .reserved_2 = NULL,
 };
