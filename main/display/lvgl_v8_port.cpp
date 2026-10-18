@@ -29,25 +29,38 @@ static uint16_t g_rotation_degree = 0;
 static uint16_t* g_slice_buf = nullptr;
 static size_t g_slice_buf_size = 0;
 
-static inline void rotate_slice_16bpp(
+IRAM_ATTR static void rotate_slice_16bpp(
     const uint16_t *src, uint16_t *dst,
     int w, int h, uint16_t rotate
 )
 {
+    constexpr int BX = 32;
+    constexpr int BY = 32;
+
     if (rotate == 90) {
-        for (int y = 0; y < h; y++) {
-            const uint16_t *src_row = src + y * w;
-            int dst_x_base = h - 1 - y;
-            for (int x = 0; x < w; x++) {
-                dst[x * h + dst_x_base] = src_row[x];
+        for (int x0 = 0; x0 < w; x0 += BX) {
+            int x_max = (x0 + BX < w) ? (x0 + BX) : w;
+            for (int y0 = 0; y0 < h; y0 += BY) {
+                int y_max = (y0 + BY < h) ? (y0 + BY) : h;
+                for (int x = x0; x < x_max; x++) {
+                    uint16_t *dst_row = dst + x * h;
+                    for (int y = y0; y < y_max; y++) {
+                        dst_row[h - 1 - y] = src[y * w + x];
+                    }
+                }
             }
         }
     } else if (rotate == 270) {
-        for (int y = 0; y < h; y++) {
-            const uint16_t *src_row = src + y * w;
-            int dst_x_base = y;
-            for (int x = 0; x < w; x++) {
-                dst[(w - 1 - x) * h + dst_x_base] = src_row[x];
+        for (int x0 = 0; x0 < w; x0 += BX) {
+            int x_max = (x0 + BX < w) ? (x0 + BX) : w;
+            for (int y0 = 0; y0 < h; y0 += BY) {
+                int y_max = (y0 + BY < h) ? (y0 + BY) : h;
+                for (int x = x0; x < x_max; x++) {
+                    uint16_t *dst_row = dst + (w - 1 - x) * h;
+                    for (int y = y0; y < y_max; y++) {
+                        dst_row[y] = src[y * w + x];
+                    }
+                }
             }
         }
     }
@@ -540,7 +553,9 @@ void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color
         }
 
         if (g_slice_buf) {
+            int64_t t0 = esp_timer_get_time();
             rotate_slice_16bpp((const uint16_t*)color_map, g_slice_buf, w, h, g_rotation_degree);
+            int64_t t_rot = esp_timer_get_time() - t0;
 
             int phys_x, phys_y, phys_w, phys_h;
             if (g_rotation_degree == 90) {
@@ -561,7 +576,15 @@ void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color
             if (phys_y + phys_h > 600) phys_h = 600 - phys_y;
 
             if (phys_w > 0 && phys_h > 0) {
+                int64_t t1 = esp_timer_get_time();
                 safe_draw_bitmap(lcd, phys_x, phys_y, phys_w, phys_h, (const uint8_t*)g_slice_buf);
+                int64_t t_draw = esp_timer_get_time() - t1;
+
+                static int s_flush_count = 0;
+                if ((++s_flush_count % 15) == 0) {
+                    ESP_LOGI("FLUSH_PERF", "(%dx%d) rot=%.2f ms, draw=%.2f ms",
+                             w, h, (float)t_rot / 1000.0f, (float)t_draw / 1000.0f);
+                }
             }
         } else {
             safe_draw_bitmap(lcd, x1, y1, w, h, (const uint8_t*)color_map);
@@ -894,11 +917,13 @@ bool lvgl_port_init(LCD *lcd, Touch *tp)
     disp = display_init(lcd);
     ESP_UTILS_CHECK_NULL_RETURN(disp, false, "Initialize LVGL display driver failed");
 
+#if LVGL_PORT_AVOID_TEAR
     // For non-RGB LCD, need to notify LVGL that the buffer is ready when the refresh is finished
     if (bus_type != ESP_PANEL_BUS_TYPE_RGB) {
         ESP_UTILS_LOGD("Attach refresh finish callback to LCD");
         lcd->attachDrawBitmapFinishCallback(onDrawBitmapFinishCallback, (void *)disp->driver);
     }
+#endif
 
     if (tp != nullptr) {
         ESP_UTILS_LOGD("Initialize LVGL input driver");
