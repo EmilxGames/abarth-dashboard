@@ -2,7 +2,7 @@ dependencies:
   idf:
     version: '>=5.4.0'
   lvgl/lvgl:
-    version: '^9.2.2'
+    version: '^9.6.0'
   espressif/esp_lcd_touch_gt911:
     version: '~1.2.0'
   espressif/esp_lcd_jd9165:
