@@ -18,6 +18,8 @@
 #include <esp_heap_caps.h>
 #include "storage/sd_card_manager.h"
 #include "ui/settings_tab.h"
+#include "ui/abarth_logo_png.h"
+#include "ui/oil_blue_png.h"
 
 namespace abarth::ui {
 
@@ -365,8 +367,12 @@ void on_tick(lv_timer_t* /*t*/) {
                     lv_obj_set_style_bg_color(g_warmup_badge, lv_color_hex(0x081524), 0);
                     lv_obj_set_style_text_color(g_warmup_lbl, lv_color_hex(0x38BDF8), 0);
 
-                    if (abarth::storage::sd().isMounted() && g_warmup_icon) {
-                        lv_img_set_src(g_warmup_icon, "S:/icons/oil_blue.png");
+                    if (g_warmup_icon) {
+                        if (abarth::storage::sd().isMounted()) {
+                            lv_image_set_src(g_warmup_icon, "S:/icons/oil_blue.png");
+                        } else {
+                            lv_image_set_src(g_warmup_icon, &g_oil_blue_img_dsc);
+                        }
                         lv_obj_set_style_img_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
                         lv_obj_clear_flag(g_warmup_icon, LV_OBJ_FLAG_HIDDEN);
                     }
@@ -385,8 +391,8 @@ void on_tick(lv_timer_t* /*t*/) {
                     lv_obj_set_style_text_color(g_warmup_lbl, lv_color_hex(0xF59E0B), 0);
 
                     if (abarth::storage::sd().isMounted() && g_warmup_icon) {
-                        lv_img_set_src(g_warmup_icon, "S:/icons/timer.png");
-                        lv_obj_set_style_img_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
+                        lv_image_set_src(g_warmup_icon, "S:/icons/timer.png");
+                        lv_obj_set_style_image_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
                         lv_obj_clear_flag(g_warmup_icon, LV_OBJ_FLAG_HIDDEN);
                     }
 
@@ -399,8 +405,8 @@ void on_tick(lv_timer_t* /*t*/) {
                     lv_obj_set_style_text_color(g_warmup_lbl, lv_color_hex(0x22C55E), 0);
 
                     if (abarth::storage::sd().isMounted() && g_warmup_icon) {
-                        lv_img_set_src(g_warmup_icon, "S:/icons/checkered_flag.png");
-                        lv_obj_set_style_img_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
+                        lv_image_set_src(g_warmup_icon, "S:/icons/checkered_flag.png");
+                        lv_obj_set_style_image_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
                         lv_obj_clear_flag(g_warmup_icon, LV_OBJ_FLAG_HIDDEN);
                     }
 
@@ -1685,11 +1691,13 @@ void build() {
     lv_obj_set_flex_flow(left_box, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(left_box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
+    lv_obj_t* ico_scorp = lv_image_create(left_box);
     if (abarth::storage::sd().isMounted()) {
-        lv_obj_t* ico_scorp = lv_img_create(left_box);
-        lv_img_set_src(ico_scorp, "S:/icons/abarth_logo.png");
-        lv_obj_set_style_pad_right(ico_scorp, 8, 0);
+        lv_image_set_src(ico_scorp, "S:/icons/abarth_logo.png");
+    } else {
+        lv_image_set_src(ico_scorp, &g_abarth_logo_img_dsc);
     }
+    lv_obj_set_style_pad_right(ico_scorp, 8, 0);
 
     lv_obj_t* title = lv_label_create(left_box);
     lv_obj_set_style_text_color(title, lv_color_hex(mf::TEXT_WHITE), 0);
@@ -1710,14 +1718,14 @@ void build() {
     lv_obj_set_flex_flow(g_warmup_badge, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(g_warmup_badge, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    g_warmup_icon = lv_img_create(g_warmup_badge);
+    g_warmup_icon = lv_image_create(g_warmup_badge);
     if (abarth::storage::sd().isMounted()) {
-        lv_img_set_src(g_warmup_icon, "S:/icons/oil_blue.png");
-        lv_obj_set_style_img_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_pad_right(g_warmup_icon, 6, 0);
+        lv_image_set_src(g_warmup_icon, "S:/icons/oil_blue.png");
     } else {
-        lv_obj_add_flag(g_warmup_icon, LV_OBJ_FLAG_HIDDEN);
+        lv_image_set_src(g_warmup_icon, &g_oil_blue_img_dsc);
     }
+    lv_obj_set_style_img_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_right(g_warmup_icon, 6, 0);
 
     g_warmup_lbl = lv_label_create(g_warmup_badge);
     lv_obj_set_style_text_font(g_warmup_lbl, &lv_font_montserrat_14, 0);

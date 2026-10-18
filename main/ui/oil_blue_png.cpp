@@ -333,4 +333,21 @@ extern const uint8_t g_oil_blue_png[] = {
   0x58, 0xbe, 0x18, 0x9f, 0x24, 0x43, 0x01, 0x00, 0x00, 0x00, 0x00, 0x49,
   0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
 };
+
 extern const size_t g_oil_blue_png_len = sizeof(g_oil_blue_png);
+
+extern const lv_image_dsc_t g_oil_blue_img_dsc = {
+    .header = {
+        .magic = LV_IMAGE_HEADER_MAGIC,
+        .cf = LV_COLOR_FORMAT_RAW_ALPHA,
+        .flags = 0,
+        .w = 64,
+        .h = 64,
+        .stride = 0,
+        .reserved_2 = 0,
+    },
+    .data_size = sizeof(g_oil_blue_png),
+    .data = g_oil_blue_png,
+    .reserved = NULL,
+    .reserved_2 = NULL,
+};

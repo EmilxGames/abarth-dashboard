@@ -55,14 +55,18 @@ static const uint8_t carbon_pattern_map[] = {
     0x3F, 0x3F, 0x29, 0x65, 0x18, 0xC3, 0x08, 0x41, 0x08, 0x41, 0x18, 0xC3, 0x29, 0x65, 0x3F, 0x3F,
 };
 
-static const lv_img_dsc_t carbon_pattern_dsc = {
+static const lv_image_dsc_t carbon_pattern_dsc = {
     .header = {
-        .cf = LV_IMG_CF_TRUE_COLOR,
-        .always_zero = 0,
-        .reserved = 0,
+        .magic = LV_IMAGE_HEADER_MAGIC,
+        .cf = LV_COLOR_FORMAT_RGB565,
+        .flags = 0,
         .w = 16,
         .h = 16,
+        .stride = 32,
+        .reserved_2 = 0,
     },
     .data_size = sizeof(carbon_pattern_map),
     .data = carbon_pattern_map,
+    .reserved = NULL,
+    .reserved_2 = NULL,
 };

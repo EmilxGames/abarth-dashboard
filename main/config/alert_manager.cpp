@@ -769,8 +769,8 @@ void AlertManager::triggerColdEngineWarmupAlert(float rpm, float water_temp, uin
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     if (abarth::storage::sd().isMounted()) {
-        lv_obj_t* img = lv_img_create(header);
-        lv_img_set_src(img, "S:/icons/warning.png");
+        lv_obj_t* img = lv_image_create(header);
+        lv_image_set_src(img, "S:/icons/warning.png");
         lv_obj_set_style_pad_right(img, 12, 0);
     } else {
         lv_obj_t* ico = lv_label_create(header);
@@ -902,8 +902,8 @@ void AlertManager::triggerWarmupCompleteAlert(bool is_test) {
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     if (abarth::storage::sd().isMounted()) {
-        lv_obj_t* img = lv_img_create(header);
-        lv_img_set_src(img, "S:/icons/checkered_flag.png");
+        lv_obj_t* img = lv_image_create(header);
+        lv_image_set_src(img, "S:/icons/checkered_flag.png");
         lv_obj_set_style_pad_right(img, 12, 0);
     } else {
         lv_obj_t* ico = lv_label_create(header);

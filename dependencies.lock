@@ -226,6 +226,6 @@ direct_dependencies:
 - h2zero/esp-nimble-cpp
 - idf
 - lvgl/lvgl
-manifest_hash: 1f0ac7edc382ad520e6fc3c602e9815b3807bc5c775dc168c94e64bedb1bd1ab
+manifest_hash: cce3070a60af21053c129d6d24a45b3647241579aa445e2e3e386c608a19c63d
 target: esp32p4
 version: 2.0.0

@@ -282,7 +282,9 @@ void SDCardManager::registerLvglFsDriver() {
     lv_fs_drv_register(&s_lv_fs_drv);
     ESP_LOGI(TAG, "Driver filesystem LVGL registrato come unita' 'S:' (S:/icons/...)");
 
-#if LV_USE_PNG
+#if LV_USE_LODEPNG
+    ESP_LOGI(TAG, "Decoder LodePNG per LVGL attivo");
+#elif LV_USE_PNG
     lv_png_init();
     ESP_LOGI(TAG, "Decoder PNG per LVGL inizializzato con successo");
 #endif
