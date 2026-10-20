@@ -30,7 +30,7 @@ static inline lv_obj_t* lv_spinner_create(lv_obj_t* parent, uint32_t t, uint32_t
 #define LVGL_PORT_TICK_PERIOD_MS                (2)
 
 #define LVGL_PORT_BUFFER_MALLOC_CAPS            (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
-#define LVGL_PORT_BUFFER_SIZE_HEIGHT            (300)
+#define LVGL_PORT_BUFFER_SIZE_HEIGHT            (512)
 #define LVGL_PORT_BUFFER_NUM                    (2)
 
 #define LVGL_PORT_TASK_MAX_DELAY_MS             (500)

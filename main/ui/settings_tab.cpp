@@ -2574,14 +2574,14 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                 }, LV_EVENT_CLICKED, (void*)(uintptr_t)si);
             }
 
-            // Contenitore scrollabile compatto del sottomenu attivo
+            // Contenitore compatto del sottomenu attivo (lo scroll e' gestito dal parent g_content_panel)
             lv_obj_t* sub_content = lv_obj_create(g_content_panel);
             lv_obj_remove_style_all(sub_content);
             lv_obj_set_width(sub_content, LV_PCT(100));
-            lv_obj_set_flex_grow(sub_content, 1);
+            lv_obj_set_height(sub_content, LV_SIZE_CONTENT);
             lv_obj_set_flex_flow(sub_content, LV_FLEX_FLOW_COLUMN);
             lv_obj_set_style_pad_row(sub_content, 8, 0);
-            lv_obj_set_scroll_dir(sub_content, LV_DIR_VER);
+            lv_obj_clear_flag(sub_content, LV_OBJ_FLAG_SCROLLABLE);
 
             if (subtab_idx == 0) {
                 // ==================== SUBMENU 0: ALLARMI BASE ====================
@@ -3695,6 +3695,7 @@ void build(lv_obj_t* tab) {
     ensure_styles();
 
     lv_obj_set_style_bg_color(tab, lv_color_hex(0x080810), 0);
+    lv_obj_set_style_bg_opa(tab, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(tab, 0, 0);
     lv_obj_remove_style(tab, nullptr, LV_PART_SCROLLBAR);
     lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
@@ -3846,30 +3847,42 @@ void build(lv_obj_t* tab) {
     lv_obj_set_width(grid_cont, LV_PCT(100));
     lv_obj_set_flex_grow(grid_cont, 1);
     lv_obj_set_flex_flow(grid_cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_bg_color(grid_cont, lv_color_hex(0x0E0E14), 0);
+    lv_obj_set_style_bg_opa(grid_cont, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_row(grid_cont, 12, 0);
     lv_obj_set_style_pad_bottom(grid_cont, 16, 0);
     lv_obj_set_scroll_dir(grid_cont, LV_DIR_VER);
     lv_obj_add_flag(grid_cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(grid_cont, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_set_scrollbar_mode(grid_cont, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(grid_cont, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t* cur_row = nullptr;
 
     for (size_t i = 0; i < NUM_CATEGORIES; ++i) {
-        if (is_portrait || (i % 2 == 0)) {
-            cur_row = lv_obj_create(grid_cont);
-            lv_obj_remove_style_all(cur_row);
-            lv_obj_set_width(cur_row, LV_PCT(100));
-            lv_obj_set_height(cur_row, LV_SIZE_CONTENT);
-            lv_obj_set_flex_flow(cur_row, LV_FLEX_FLOW_ROW);
-            lv_obj_set_style_pad_gap(cur_row, 14, 0);
-            lv_obj_clear_flag(cur_row, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_clear_flag(cur_row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t* parent_cont = grid_cont;
+        if (!is_portrait) {
+            if (i % 2 == 0) {
+                cur_row = lv_obj_create(grid_cont);
+                lv_obj_remove_style_all(cur_row);
+                lv_obj_set_width(cur_row, LV_PCT(100));
+                lv_obj_set_height(cur_row, LV_SIZE_CONTENT);
+                lv_obj_set_flex_flow(cur_row, LV_FLEX_FLOW_ROW);
+                lv_obj_set_style_pad_gap(cur_row, 14, 0);
+                lv_obj_clear_flag(cur_row, LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_clear_flag(cur_row, LV_OBJ_FLAG_SCROLLABLE);
+            }
+            parent_cont = cur_row;
         }
 
-        lv_obj_t* card = lv_btn_create(cur_row);
+        lv_obj_t* card = lv_btn_create(parent_cont);
         lv_obj_add_style(card, &style_menu_card, 0);
         lv_obj_add_style(card, &style_menu_card_pressed, LV_STATE_PRESSED);
-        lv_obj_set_flex_grow(card, 1);
+        if (is_portrait) {
+            lv_obj_set_width(card, LV_PCT(100));
+        } else {
+            lv_obj_set_flex_grow(card, 1);
+        }
         lv_obj_set_height(card, 70);
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -4069,11 +4082,14 @@ void build(lv_obj_t* tab) {
     lv_obj_remove_style_all(g_content_panel);
     lv_obj_set_flex_grow(g_content_panel, 1);
     lv_obj_set_width(g_content_panel, LV_PCT(100));
-    lv_obj_set_style_bg_opa(g_content_panel, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(g_content_panel, lv_color_hex(0x0E0E14), 0);
+    lv_obj_set_style_bg_opa(g_content_panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(g_content_panel, 16, 0);
     lv_obj_set_style_pad_row(g_content_panel, 14, 0);
     lv_obj_set_flex_flow(g_content_panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(g_content_panel, LV_DIR_VER);
+    lv_obj_clear_flag(g_content_panel, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_set_scrollbar_mode(g_content_panel, LV_SCROLLBAR_MODE_OFF);
 
     // Inizializza subito data e ora correnti su tutti i widget
     refresh_rtc_ui();

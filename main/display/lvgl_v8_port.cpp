@@ -13,6 +13,7 @@
 #include <esp_log.h>
 #include <esp_rom_sys.h>
 #include <cstring>
+#include <algorithm>
 #include "config/settings.h"
 
 using namespace esp_panel::drivers;
@@ -31,7 +32,11 @@ static void *lvgl_buf[LVGL_PORT_BUFFER_NUM] = { nullptr };
 static lv_display_t *g_disp = nullptr;
 static lv_indev_t *g_indev = nullptr;
 
-// Cache-blocked 32x32 rotation algorithm in IRAM for maximum speed
+// Fast L1 SRAM scratchpad for tiled rotation (4 KB total, static in internal DRAM BSS)
+alignas(16) static uint16_t s_tile_in[32][32];
+alignas(16) static uint16_t s_tile_out[32][32];
+
+// Cache-blocked 32x32 rotation algorithm with contiguous burst PSRAM I/O
 IRAM_ATTR static void rotate_slice_16bpp(
     const uint16_t *src, uint16_t *dst,
     int w, int h, uint16_t rotate
@@ -42,27 +47,51 @@ IRAM_ATTR static void rotate_slice_16bpp(
 
     if (rotate == 90) {
         for (int x0 = 0; x0 < w; x0 += BX) {
-            int x_max = (x0 + BX < w) ? (x0 + BX) : w;
+            const int bw = (x0 + BX <= w) ? BX : (w - x0);
             for (int y0 = 0; y0 < h; y0 += BY) {
-                int y_max = (y0 + BY < h) ? (y0 + BY) : h;
-                for (int x = x0; x < x_max; x++) {
-                    uint16_t *dst_row = dst + x * h;
-                    for (int y = y0; y < y_max; y++) {
-                        dst_row[h - 1 - y] = src[y * w + x];
+                const int bh = (y0 + BY <= h) ? BY : (h - y0);
+
+                // 1. Sequential burst read from PSRAM into L1 SRAM
+                for (int ty = 0; ty < bh; ty++) {
+                    memcpy(s_tile_in[ty], &src[(y0 + ty) * w + x0], bw * sizeof(uint16_t));
+                }
+
+                // 2. Transpose in fast L1 SRAM
+                for (int tx = 0; tx < bw; tx++) {
+                    for (int ty = 0; ty < bh; ty++) {
+                        s_tile_out[tx][bh - 1 - ty] = s_tile_in[ty][tx];
                     }
+                }
+
+                // 3. Sequential burst write to PSRAM from L1 SRAM
+                for (int tx = 0; tx < bw; tx++) {
+                    const int dst_offset = (x0 + tx) * h + (h - y0 - bh);
+                    memcpy(&dst[dst_offset], s_tile_out[tx], bh * sizeof(uint16_t));
                 }
             }
         }
     } else if (rotate == 270) {
         for (int x0 = 0; x0 < w; x0 += BX) {
-            int x_max = (x0 + BX < w) ? (x0 + BX) : w;
+            const int bw = (x0 + BX <= w) ? BX : (w - x0);
             for (int y0 = 0; y0 < h; y0 += BY) {
-                int y_max = (y0 + BY < h) ? (y0 + BY) : h;
-                for (int x = x0; x < x_max; x++) {
-                    uint16_t *dst_row = dst + (w - 1 - x) * h;
-                    for (int y = y0; y < y_max; y++) {
-                        dst_row[y] = src[y * w + x];
+                const int bh = (y0 + BY <= h) ? BY : (h - y0);
+
+                // 1. Sequential burst read from PSRAM into L1 SRAM
+                for (int ty = 0; ty < bh; ty++) {
+                    memcpy(s_tile_in[ty], &src[(y0 + ty) * w + x0], bw * sizeof(uint16_t));
+                }
+
+                // 2. Transpose in fast L1 SRAM
+                for (int tx = 0; tx < bw; tx++) {
+                    for (int ty = 0; ty < bh; ty++) {
+                        s_tile_out[tx][ty] = s_tile_in[ty][tx];
                     }
+                }
+
+                // 3. Sequential burst write to PSRAM from L1 SRAM
+                for (int tx = 0; tx < bw; tx++) {
+                    const int dst_offset = (w - 1 - (x0 + tx)) * h + y0;
+                    memcpy(&dst[dst_offset], s_tile_out[tx], bh * sizeof(uint16_t));
                 }
             }
         }
@@ -224,6 +253,11 @@ static lv_display_t *display_init(LCD *lcd)
     lv_display_set_buffers(disp, lvgl_buf[0], lvgl_buf[1], buffer_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(disp, flush_callback);
 
+    lv_timer_t *refr_timer = lv_display_get_refr_timer(disp);
+    if (refr_timer) {
+        lv_timer_set_period(refr_timer, 16); // 62.5 FPS display refresh target
+    }
+
     return disp;
 }
 
@@ -249,6 +283,11 @@ static lv_indev_t *indev_init(Touch *tp, lv_display_t *disp)
     lv_indev_set_read_cb(indev, touchpad_read);
     lv_indev_set_user_data(indev, (void *)tp);
     lv_indev_set_display(indev, disp);
+
+    lv_timer_t *read_timer = lv_indev_get_read_timer(indev);
+    if (read_timer) {
+        lv_timer_set_period(read_timer, 15); // 66.7 Hz responsive touch reading
+    }
 
     return indev;
 }
