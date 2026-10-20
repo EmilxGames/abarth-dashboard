@@ -87,6 +87,7 @@ lv_obj_t* g_device_label       = nullptr;
 lv_obj_t* g_ok_counter_label   = nullptr;
 lv_obj_t* g_err_counter_label  = nullptr;
 lv_obj_t* g_last_err_label     = nullptr;
+lv_obj_t* g_main_tabview        = nullptr;
 
 /* --- Minimal Funzionale: cockpit essenziale e strisce telemetriche ------ */
 
@@ -635,8 +636,9 @@ void on_tick(lv_timer_t* /*t*/) {
 
     settings_tab::tick();
 
-    // === MINIMAL FUNZIONALE: aggiorna cockpit e telemetry strips ===
-    if (g_mf_dash.active) {
+    // === MINIMAL FUNZIONALE: aggiorna cockpit e telemetry strips solo se visibili (tab 0..4) ===
+    const uint32_t active_tab = g_main_tabview ? lv_tabview_get_tab_active(g_main_tabview) : 0;
+    if (active_tab <= 4 && g_mf_dash.active) {
         update_minimal_dashboard(now_ms);
     }
 }
@@ -1789,6 +1791,7 @@ void build() {
     /* --- Tabview ---------------------------------------------------------- */
     const int tab_bar_h = 44;
     lv_obj_t* tabview = lv_tabview_create(scr);
+    g_main_tabview = tabview;
     lv_tabview_set_tab_bar_position(tabview, LV_DIR_TOP);
     lv_tabview_set_tab_bar_size(tabview, tab_bar_h);
     lv_obj_set_size(tabview, LV_PCT(100), LV_VER_RES - header_h);
@@ -1798,18 +1801,20 @@ void build() {
     lv_obj_add_flag(g_conn_badge, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(g_conn_badge, [](lv_event_t* e) {
         lv_obj_t* tv = (lv_obj_t*)lv_event_get_user_data(e);
-        if (tv) lv_tabview_set_act(tv, 5, LV_ANIM_ON);
+        if (tv) lv_tabview_set_act(tv, 5, LV_ANIM_OFF);
     }, LV_EVENT_CLICKED, tabview);
 
     lv_obj_add_flag(left_box, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(left_box, [](lv_event_t* e) {
         lv_obj_t* tv = (lv_obj_t*)lv_event_get_user_data(e);
-        if (tv) lv_tabview_set_act(tv, 0, LV_ANIM_ON);
+        if (tv) lv_tabview_set_act(tv, 0, LV_ANIM_OFF);
     }, LV_EVENT_CLICKED, tabview);
     lv_obj_t* tv_content = lv_tabview_get_content(tabview);
     if (tv_content) {
         lv_obj_set_style_bg_opa(tv_content, LV_OPA_TRANSP, 0);
         lv_obj_clear_flag(tv_content, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(tv_content, LV_OBJ_FLAG_SCROLL_CHAIN);
+        lv_obj_set_scroll_dir(tv_content, LV_DIR_NONE);
     }
 
     lv_obj_t* t_motor = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_POWER " Motore" : LV_SYMBOL_POWER " Motore");

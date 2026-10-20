@@ -120,12 +120,16 @@ void ensure_styles() {
     lv_style_set_radius(&style_menu_card, 12);
     lv_style_set_pad_hor(&style_menu_card, 12);
     lv_style_set_pad_ver(&style_menu_card, 8);
+    lv_style_set_shadow_width(&style_menu_card, 0);
+    lv_style_set_anim_duration(&style_menu_card, 0);
 
     // Card menu categorie quando premuta
     lv_style_init(&style_menu_card_pressed);
     lv_style_set_bg_color(&style_menu_card_pressed, lv_color_hex(0x28283E));
     lv_style_set_border_color(&style_menu_card_pressed, lv_color_hex(0xCC3030));
     lv_style_set_border_width(&style_menu_card_pressed, 1);
+    lv_style_set_shadow_width(&style_menu_card_pressed, 0);
+    lv_style_set_anim_duration(&style_menu_card_pressed, 0);
 
     // Gruppo Card stile Smartphone (iOS/Android)
     lv_style_init(&style_card_group);
@@ -136,6 +140,8 @@ void ensure_styles() {
     lv_style_set_radius(&style_card_group, 14);
     lv_style_set_pad_all(&style_card_group, 16);
     lv_style_set_pad_row(&style_card_group, 12);
+    lv_style_set_shadow_width(&style_card_group, 0);
+    lv_style_set_anim_duration(&style_card_group, 0);
 }
 
 void close_modal(lv_event_t* = nullptr) {
@@ -522,12 +528,14 @@ void reboot_cb(lv_event_t* /*e*/) {
 // --- Helper Card Group Stile Smartphone ---
 lv_obj_t* make_card_group(lv_obj_t* parent, const char* title, const char* icon_symbol = nullptr) {
     lv_obj_t* card = lv_obj_create(parent);
+    lv_obj_remove_style_all(card);
     lv_obj_add_style(card, &style_card_group, 0);
     lv_obj_set_width(card, LV_PCT(100));
     lv_obj_set_height(card, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_remove_style(card, nullptr, LV_PART_SCROLLBAR);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLL_CHAIN);
 
     if (title) {
         lv_obj_t* header_row = lv_obj_create(card);
@@ -3699,6 +3707,7 @@ void build(lv_obj_t* tab) {
     lv_obj_set_style_pad_all(tab, 0, 0);
     lv_obj_remove_style(tab, nullptr, LV_PART_SCROLLBAR);
     lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLL_CHAIN);
 
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
 
@@ -3716,6 +3725,7 @@ void build(lv_obj_t* tab) {
     lv_obj_set_style_pad_bottom(g_menu_page, 8, 0);
     lv_obj_set_style_pad_row(g_menu_page, 10, 0);
     lv_obj_clear_flag(g_menu_page, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(g_menu_page, LV_OBJ_FLAG_SCROLL_CHAIN);
 
     // Header Bar in alto nel Menu Categorie (con Titolo, Data e Ora RTC)
     lv_obj_t* header_card = lv_obj_create(g_menu_page);
@@ -3854,6 +3864,7 @@ void build(lv_obj_t* tab) {
     lv_obj_set_scroll_dir(grid_cont, LV_DIR_VER);
     lv_obj_add_flag(grid_cont, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(grid_cont, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_clear_flag(grid_cont, LV_OBJ_FLAG_SCROLL_CHAIN);
     lv_obj_set_scrollbar_mode(grid_cont, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(grid_cont, LV_OBJ_FLAG_CLICKABLE);
 
@@ -3871,13 +3882,18 @@ void build(lv_obj_t* tab) {
                 lv_obj_set_style_pad_gap(cur_row, 14, 0);
                 lv_obj_clear_flag(cur_row, LV_OBJ_FLAG_CLICKABLE);
                 lv_obj_clear_flag(cur_row, LV_OBJ_FLAG_SCROLLABLE);
+                lv_obj_clear_flag(cur_row, LV_OBJ_FLAG_SCROLL_CHAIN);
             }
             parent_cont = cur_row;
         }
 
-        lv_obj_t* card = lv_btn_create(parent_cont);
+        lv_obj_t* card = lv_obj_create(parent_cont);
+        lv_obj_remove_style_all(card);
         lv_obj_add_style(card, &style_menu_card, 0);
         lv_obj_add_style(card, &style_menu_card_pressed, LV_STATE_PRESSED);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLL_CHAIN);
         if (is_portrait) {
             lv_obj_set_width(card, LV_PCT(100));
         } else {
@@ -3962,6 +3978,7 @@ void build(lv_obj_t* tab) {
     lv_obj_set_style_bg_color(g_detail_page, lv_color_hex(0x0E0E14), 0);
     lv_obj_set_style_bg_opa(g_detail_page, LV_OPA_COVER, 0);
     lv_obj_clear_flag(g_detail_page, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(g_detail_page, LV_OBJ_FLAG_SCROLL_CHAIN);
     lv_obj_add_flag(g_detail_page, LV_OBJ_FLAG_HIDDEN); // Nascosta di default
 
     // Top Navigation Bar (Fissa in alto, non scrolla)
@@ -4089,6 +4106,7 @@ void build(lv_obj_t* tab) {
     lv_obj_set_flex_flow(g_content_panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(g_content_panel, LV_DIR_VER);
     lv_obj_clear_flag(g_content_panel, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_clear_flag(g_content_panel, LV_OBJ_FLAG_SCROLL_CHAIN);
     lv_obj_set_scrollbar_mode(g_content_panel, LV_SCROLLBAR_MODE_OFF);
 
     // Inizializza subito data e ora correnti su tutti i widget
