@@ -373,16 +373,17 @@ void on_tick(lv_timer_t* /*t*/) {
                         } else {
                             lv_image_set_src(g_warmup_icon, &g_oil_blue_img_dsc);
                         }
-                        lv_obj_set_style_img_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
+                        lv_image_set_scale(g_warmup_icon, 80);
+                        lv_obj_set_style_image_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
                         lv_obj_clear_flag(g_warmup_icon, LV_OBJ_FLAG_HIDDEN);
                     }
 
                     const auto s_coolant = abarth::data::store().get(Metric::CoolantTempC);
-                    char b[48];
+                    char b[32];
                     if (s_coolant.valid()) {
-                        std::snprintf(b, sizeof(b), abarth::storage::sd().isMounted() ? "H2O %.0f C (FREDDO)" : LV_SYMBOL_REFRESH " H2O %.0f C (FREDDO)", s_coolant.value);
+                        std::snprintf(b, sizeof(b), "H2O %.0f°C", s_coolant.value);
                     } else {
-                        std::snprintf(b, sizeof(b), abarth::storage::sd().isMounted() ? "MOTORE FREDDO" : LV_SYMBOL_REFRESH " MOTORE FREDDO");
+                        std::snprintf(b, sizeof(b), "MOTORE FREDDO");
                     }
                     lv_label_set_text(g_warmup_lbl, b);
                 } else if (wst == WarmupState::Warming) {
@@ -392,12 +393,13 @@ void on_tick(lv_timer_t* /*t*/) {
 
                     if (abarth::storage::sd().isMounted() && g_warmup_icon) {
                         lv_image_set_src(g_warmup_icon, "S:/icons/timer.png");
+                        lv_image_set_scale(g_warmup_icon, 80);
                         lv_obj_set_style_image_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
                         lv_obj_clear_flag(g_warmup_icon, LV_OBJ_FLAG_HIDDEN);
                     }
 
                     char b[32];
-                    std::snprintf(b, sizeof(b), abarth::storage::sd().isMounted() ? "WARMUP %02d:%02d" : LV_SYMBOL_SETTINGS " OLIO %02d:%02d", rem_sec / 60, rem_sec % 60);
+                    std::snprintf(b, sizeof(b), "WARMUP %02d:%02d", rem_sec / 60, rem_sec % 60);
                     lv_label_set_text(g_warmup_lbl, b);
                 } else if (wst == WarmupState::Ready) {
                     lv_obj_set_style_border_color(g_warmup_badge, lv_color_hex(0x16A34A), 0);
@@ -406,11 +408,12 @@ void on_tick(lv_timer_t* /*t*/) {
 
                     if (abarth::storage::sd().isMounted() && g_warmup_icon) {
                         lv_image_set_src(g_warmup_icon, "S:/icons/checkered_flag.png");
+                        lv_image_set_scale(g_warmup_icon, 80);
                         lv_obj_set_style_image_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
                         lv_obj_clear_flag(g_warmup_icon, LV_OBJ_FLAG_HIDDEN);
                     }
 
-                    lv_label_set_text(g_warmup_lbl, abarth::storage::sd().isMounted() ? "OLIO PRONTO" : LV_SYMBOL_OK " OLIO PRONTO");
+                    lv_label_set_text(g_warmup_lbl, "OLIO PRONTO");
                 }
             }
         }
@@ -436,7 +439,7 @@ void on_tick(lv_timer_t* /*t*/) {
             static int s_last_sd_ok = -1;
             if ((int)sd_ok != s_last_sd_ok) {
                 s_last_sd_ok = (int)sd_ok;
-                lv_label_set_text(g_sd_label, sd_ok ? LV_SYMBOL_SD_CARD " SD" : "");
+                lv_label_set_text(g_sd_label, sd_ok ? LV_SYMBOL_SD_CARD : "");
             }
         }
         // Registra su SD solo durante polling attivo (evita scritture inutili a cruscotto fermo)
@@ -561,8 +564,8 @@ void on_tick(lv_timer_t* /*t*/) {
                         lv_obj_set_style_text_color(g_conn_icon, lv_color_hex(0xFBBF24), 0);
                     }
                     if (g_conn_label) {
-                        const char* txt = (st == abarth::obd::ObdState::Scanning) ? "RICERCA" :
-                                          (st == abarth::obd::ObdState::Connecting) ? "CONN..." : "INIT...";
+                        const char* txt = (st == abarth::obd::ObdState::Scanning) ? "SCAN" :
+                                          (st == abarth::obd::ObdState::Connecting) ? "CONN" : "INIT";
                         lv_label_set_text(g_conn_label, txt);
                         lv_obj_set_style_text_color(g_conn_label, lv_color_hex(0xFBBF24), 0);
                     }
@@ -575,7 +578,7 @@ void on_tick(lv_timer_t* /*t*/) {
                         lv_obj_set_style_text_color(g_conn_icon, lv_color_hex(0xF87171), 0);
                     }
                     if (g_conn_label) {
-                        lv_label_set_text(g_conn_label, "ERRORE");
+                        lv_label_set_text(g_conn_label, "ERR");
                         lv_obj_set_style_text_color(g_conn_label, lv_color_hex(0xF87171), 0);
                     }
                 } else { // Disconnected / idle
@@ -1675,21 +1678,24 @@ void build() {
     const bool is_portrait_mode = (LV_HOR_RES < LV_VER_RES);
 
     /* --- Header ----------------------------------------------------------- */
+    const int header_h = 48;
     lv_obj_t* header = lv_obj_create(scr);
     lv_obj_remove_style_all(header);
-    lv_obj_set_size(header, LV_PCT(100), 44);
+    lv_obj_set_size(header, LV_PCT(100), header_h);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_bg_color(header, lv_color_hex(mf::BG_DEEP), 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_hor(header, 14, 0);
+    lv_obj_set_style_pad_hor(header, 12, 0);
     lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
+    /* 1. Left Box: Logo Scudetto Abarth + Brand */
     lv_obj_t* left_box = lv_obj_create(header);
     lv_obj_remove_style_all(left_box);
     lv_obj_set_size(left_box, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(left_box, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(left_box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(left_box, 6, 0);
 
     lv_obj_t* ico_scorp = lv_image_create(left_box);
     if (abarth::storage::sd().isMounted()) {
@@ -1697,26 +1703,26 @@ void build() {
     } else {
         lv_image_set_src(ico_scorp, &g_abarth_logo_img_dsc);
     }
-    lv_obj_set_style_pad_right(ico_scorp, 8, 0);
 
     lv_obj_t* title = lv_label_create(left_box);
     lv_obj_set_style_text_color(title, lv_color_hex(mf::TEXT_WHITE), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(title, is_portrait_mode ? &lv_font_montserrat_16 : &lv_font_montserrat_14, 0);
     lv_label_set_recolor(title, true);
-    lv_label_set_text(title, "#EF4444 ABARTH# #FFFFFF TELEMETRY#");
+    lv_label_set_text(title, is_portrait_mode ? "#EF4444 ABARTH#" : "#EF4444 ABARTH# #FFFFFF TELEMETRY#");
 
-    // Badge Pill Warmup & Countdown (visibile al centro dell'header su ogni scheda)
+    /* 2. Center Box: Warmup & Countdown Badge */
     g_warmup_badge = lv_obj_create(header);
     lv_obj_remove_style_all(g_warmup_badge);
-    lv_obj_set_size(g_warmup_badge, LV_SIZE_CONTENT, 32);
+    lv_obj_set_size(g_warmup_badge, LV_SIZE_CONTENT, 28);
     lv_obj_set_style_bg_color(g_warmup_badge, lv_color_hex(0x0C1929), 0);
     lv_obj_set_style_bg_opa(g_warmup_badge, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(g_warmup_badge, lv_color_hex(0x0284C7), 0);
     lv_obj_set_style_border_width(g_warmup_badge, 1, 0);
-    lv_obj_set_style_radius(g_warmup_badge, 16, 0);
-    lv_obj_set_style_pad_hor(g_warmup_badge, 12, 0);
+    lv_obj_set_style_radius(g_warmup_badge, 14, 0);
+    lv_obj_set_style_pad_hor(g_warmup_badge, 10, 0);
     lv_obj_set_flex_flow(g_warmup_badge, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(g_warmup_badge, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(g_warmup_badge, 6, 0);
 
     g_warmup_icon = lv_image_create(g_warmup_badge);
     if (abarth::storage::sd().isMounted()) {
@@ -1724,50 +1730,53 @@ void build() {
     } else {
         lv_image_set_src(g_warmup_icon, &g_oil_blue_img_dsc);
     }
-    lv_obj_set_style_img_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_pad_right(g_warmup_icon, 6, 0);
+    lv_image_set_scale(g_warmup_icon, 80);
+    lv_obj_set_size(g_warmup_icon, 20, 20);
+    lv_image_set_inner_align(g_warmup_icon, LV_IMAGE_ALIGN_CENTER);
+    lv_obj_set_style_image_recolor_opa(g_warmup_icon, LV_OPA_TRANSP, 0);
 
     g_warmup_lbl = lv_label_create(g_warmup_badge);
-    lv_obj_set_style_text_font(g_warmup_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(g_warmup_lbl, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(g_warmup_lbl, lv_color_hex(0x38BDF8), 0);
-    lv_label_set_text(g_warmup_lbl, abarth::storage::sd().isMounted() ? "MOTORE FREDDO" : LV_SYMBOL_REFRESH " MOTORE FREDDO");
+    lv_label_set_text(g_warmup_lbl, "MOTORE FREDDO");
 
+    /* 3. Right Box: MicroSD + Orologio + Badge Connessione */
     lv_obj_t* right = lv_obj_create(header);
     lv_obj_remove_style_all(right);
     lv_obj_set_size(right, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(right, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(right, 10, 0);
+    lv_obj_set_style_pad_column(right, 8, 0);
 
     g_sd_label = lv_label_create(right);
     lv_obj_set_style_text_color(g_sd_label, lv_color_hex(0x10B981), 0);
     lv_obj_set_style_text_font(g_sd_label, &lv_font_montserrat_14, 0);
     if (abarth::storage::sd().isMounted()) {
-        lv_label_set_text(g_sd_label, LV_SYMBOL_SD_CARD " 32GB");
+        lv_label_set_text(g_sd_label, LV_SYMBOL_SD_CARD);
     } else {
         lv_label_set_text(g_sd_label, "");
     }
 
     g_time_label = lv_label_create(right);
-    lv_obj_set_style_text_color(g_time_label, lv_color_hex(0xF8F8F8), 0);
-    lv_obj_set_style_text_font(g_time_label, is_portrait_mode ? &lv_font_montserrat_16 : &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(g_time_label, lv_color_hex(0xF3F4F6), 0);
+    lv_obj_set_style_text_font(g_time_label, &lv_font_montserrat_14, 0);
     lv_label_set_text(g_time_label, "");
 
     g_conn_badge = lv_obj_create(right);
     lv_obj_remove_style_all(g_conn_badge);
-    lv_obj_set_size(g_conn_badge, LV_SIZE_CONTENT, 30);
+    lv_obj_set_size(g_conn_badge, LV_SIZE_CONTENT, 26);
     lv_obj_set_style_bg_color(g_conn_badge, lv_color_hex(0x141416), 0);
     lv_obj_set_style_bg_opa(g_conn_badge, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(g_conn_badge, lv_color_hex(0x3F3F46), 0);
     lv_obj_set_style_border_width(g_conn_badge, 1, 0);
-    lv_obj_set_style_radius(g_conn_badge, 15, 0);
-    lv_obj_set_style_pad_hor(g_conn_badge, 10, 0);
+    lv_obj_set_style_radius(g_conn_badge, 13, 0);
+    lv_obj_set_style_pad_hor(g_conn_badge, 8, 0);
     lv_obj_set_flex_flow(g_conn_badge, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(g_conn_badge, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(g_conn_badge, 6, 0);
+    lv_obj_set_style_pad_column(g_conn_badge, 4, 0);
 
     g_conn_icon = lv_label_create(g_conn_badge);
-    lv_obj_set_style_text_font(g_conn_icon, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(g_conn_icon, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(g_conn_icon, lv_color_hex(0x71717A), 0);
     lv_label_set_text(g_conn_icon, LV_SYMBOL_BLUETOOTH);
 
@@ -1778,10 +1787,11 @@ void build() {
     g_state_label = g_conn_label;
 
     /* --- Tabview ---------------------------------------------------------- */
+    const int tab_bar_h = 44;
     lv_obj_t* tabview = lv_tabview_create(scr);
     lv_tabview_set_tab_bar_position(tabview, LV_DIR_TOP);
-    lv_tabview_set_tab_bar_size(tabview, 48);
-    lv_obj_set_size(tabview, LV_PCT(100), LV_VER_RES - 44);
+    lv_tabview_set_tab_bar_size(tabview, tab_bar_h);
+    lv_obj_set_size(tabview, LV_PCT(100), LV_VER_RES - header_h);
     lv_obj_align(tabview, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_opa(tabview, LV_OPA_TRANSP, 0);
 
@@ -1803,27 +1813,44 @@ void build() {
     }
 
     lv_obj_t* t_motor = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_POWER " Motore" : LV_SYMBOL_POWER " Motore");
-    lv_obj_t* t_temp  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_REFRESH " Temp." : LV_SYMBOL_REFRESH " Temperature");
-    lv_obj_t* t_pres  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_DRIVE " Press." : LV_SYMBOL_DRIVE " Pressioni");
-    lv_obj_t* t_elec  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_CHARGE " Elettr." : LV_SYMBOL_CHARGE " Elettrico");
-    lv_obj_t* t_fuel  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_BATTERY_FULL " Carb." : LV_SYMBOL_BATTERY_FULL " Carburante");
+    lv_obj_t* t_temp  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_REFRESH " Temp" : LV_SYMBOL_REFRESH " Temperature");
+    lv_obj_t* t_pres  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_DRIVE " Press" : LV_SYMBOL_DRIVE " Pressioni");
+    lv_obj_t* t_elec  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_CHARGE " Volt" : LV_SYMBOL_CHARGE " Elettrico");
+    lv_obj_t* t_fuel  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_TINT " Fuel" : LV_SYMBOL_BATTERY_FULL " Carburante");
     lv_obj_t* t_info  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_LIST " Stato" : LV_SYMBOL_LIST " Stato");
-    lv_obj_t* t_set   = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_SETTINGS " Impost." : LV_SYMBOL_SETTINGS " Impostazioni");
+    lv_obj_t* t_set   = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_SETTINGS " Setup" : LV_SYMBOL_SETTINGS " Impostazioni");
 
-    lv_obj_t* tab_btns = lv_tabview_get_tab_btns(tabview);
-    if (tab_btns) {
-        const lv_font_t* tf = is_portrait_mode ? &lv_font_montserrat_12 : &lv_font_montserrat_16;
-        lv_obj_set_style_text_font(tab_btns, tf, LV_PART_ITEMS);
-        lv_obj_set_style_text_font(tab_btns, tf, (lv_style_selector_t)((uint32_t)LV_PART_ITEMS | (uint32_t)LV_STATE_CHECKED));
-        lv_obj_set_style_pad_left(tab_btns, 2, LV_PART_ITEMS);
-        lv_obj_set_style_pad_right(tab_btns, 2, LV_PART_ITEMS);
-        lv_obj_set_style_bg_color(tab_btns, lv_color_hex(mf::BG_DEEP), 0);
-        lv_obj_set_style_text_color(tab_btns, lv_color_hex(mf::TEXT_MUTED), LV_PART_ITEMS);
-        lv_obj_set_style_text_color(tab_btns, lv_color_hex(mf::TEXT_WHITE), (lv_style_selector_t)((uint32_t)LV_PART_ITEMS | (uint32_t)LV_STATE_CHECKED));
-        lv_obj_set_style_bg_color(tab_btns, lv_color_hex(mf::SURFACE_DARK), (lv_style_selector_t)((uint32_t)LV_PART_ITEMS | (uint32_t)LV_STATE_CHECKED));
-        lv_obj_set_style_border_color(tab_btns, lv_color_hex(mf::ACCENT_RED), (lv_style_selector_t)((uint32_t)LV_PART_ITEMS | (uint32_t)LV_STATE_CHECKED));
-        lv_obj_set_style_border_width(tab_btns, 3, (lv_style_selector_t)((uint32_t)LV_PART_ITEMS | (uint32_t)LV_STATE_CHECKED));
-        lv_obj_set_style_border_side(tab_btns, LV_BORDER_SIDE_BOTTOM, (lv_style_selector_t)((uint32_t)LV_PART_ITEMS | (uint32_t)LV_STATE_CHECKED));
+    lv_obj_t* tab_bar = lv_tabview_get_tab_bar(tabview);
+    if (tab_bar) {
+        lv_obj_set_style_bg_color(tab_bar, lv_color_hex(mf::BG_DEEP), 0);
+        lv_obj_set_style_bg_opa(tab_bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(tab_bar, 0, 0);
+        lv_obj_set_style_pad_column(tab_bar, 1, 0);
+        lv_obj_set_style_border_color(tab_bar, lv_color_hex(0x27272A), 0);
+        lv_obj_set_style_border_width(tab_bar, 1, 0);
+        lv_obj_set_style_border_side(tab_bar, LV_BORDER_SIDE_BOTTOM, 0);
+
+        uint32_t btn_cnt = lv_obj_get_child_count(tab_bar);
+        for (uint32_t i = 0; i < btn_cnt; i++) {
+            lv_obj_t* btn = lv_obj_get_child(tab_bar, i);
+            if (!btn) continue;
+            lv_obj_set_style_pad_hor(btn, 1, 0);
+            lv_obj_set_style_pad_ver(btn, 2, 0);
+            lv_obj_set_style_radius(btn, 0, 0);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(mf::BG_DEEP), 0);
+            lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(mf::SURFACE_DARK), LV_STATE_CHECKED);
+            lv_obj_set_style_border_color(btn, lv_color_hex(mf::ACCENT_RED), LV_STATE_CHECKED);
+            lv_obj_set_style_border_width(btn, 3, LV_STATE_CHECKED);
+            lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_STATE_CHECKED);
+
+            lv_obj_t* lbl = lv_obj_get_child(btn, 0);
+            if (lbl) {
+                lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+                lv_obj_set_style_text_color(lbl, lv_color_hex(mf::TEXT_MUTED), 0);
+                lv_obj_set_style_text_color(lbl, lv_color_hex(mf::TEXT_WHITE), LV_STATE_CHECKED);
+            }
+        }
     }
 
     /* === MINIMAL FUNZIONALE: Cockpit Essenziale e Strisce Telemetriche === */
