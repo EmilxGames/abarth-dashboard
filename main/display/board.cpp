@@ -68,6 +68,11 @@ void setBrightness(int percent) {
     }
 }
 
+void* debugFramebuffer() {
+    auto* lcd = g_board ? g_board->getLCD() : nullptr;
+    return lcd ? lcd->getFrameBufferByIndex(0) : nullptr;
+}
+
 void tick() {
     // La lvgl port del v8 crea un suo task di tick/refresh: qui nulla.
 }

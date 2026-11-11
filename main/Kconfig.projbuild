@@ -8,4 +8,12 @@ menu "Abarth Dashboard - debug"
             scorrere in automatico l'elenco delle categorie, stampando sul log
             seriale gli FPS reali (frame completi al secondo) per 20 secondi.
 
+    config ABARTH_SCREENSHOT
+        bool "Cattura schermate della UI v2 via seriale (debug)"
+        default n
+        help
+            Solo per sviluppo. Dopo l'avvio della UI v2 riempie il data store
+            con valori di esempio, mostra ogni pagina e stampa il framebuffer
+            (RLE + base64) sulla seriale, da convertire in PNG sul computer.
+
 endmenu

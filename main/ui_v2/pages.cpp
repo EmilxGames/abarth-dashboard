@@ -4,6 +4,7 @@
 #include "lvgl.h"
 #include "config/settings.h"
 #include "ui/settings_tab.h"
+#include "ui_v2/page_guida.h"
 #include "ui_v2/theme.h"
 
 namespace abarth::ui_v2::pages {
@@ -117,7 +118,7 @@ void build(Page p, lv_obj_t* parent, int32_t w, int32_t h) {
     g_h = h;
     switch (p) {
         case Page::Setup:       build_setup(parent); break;
-        case Page::Guida:       placeholder(parent, "GUIDA"); break;
+        case Page::Guida:       guida::build(parent, w, h); break;
         case Page::Temperature: placeholder(parent, "TEMPERATURE"); break;
         case Page::Pressioni:   placeholder(parent, "PRESSIONI"); break;
         case Page::Elettrico:   placeholder(parent, "ELETTRICO / CARBURANTE"); break;
@@ -126,7 +127,8 @@ void build(Page p, lv_obj_t* parent, int32_t w, int32_t h) {
     }
 }
 
-void update(Page p, int64_t /*now_ms*/) {
+void update(Page p, int64_t now_ms) {
+    if (p == Page::Guida) guida::update(now_ms);
     if (p == Page::Setup && g_adv_host && !lv_obj_has_flag(g_adv_host, LV_OBJ_FLAG_HIDDEN)) {
         static uint32_t n = 0;
         if ((n++ % 2) == 0) ui::settings_tab::tick();  // 10 Hz come nella Classica
