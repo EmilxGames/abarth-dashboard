@@ -52,7 +52,7 @@ bool     g_ready = false;
 nvs_handle_t g_handle = 0;
 
 uint8_t clamp_brightness(uint8_t percent) {
-    if (percent < 20)  return 20;
+    if (percent < 10)  return 10;  // stesso minimo dello slider
     if (percent > 100) return 100;
     return percent;
 }
@@ -164,6 +164,10 @@ bool init() {
 }
 
 const Settings& current() { return g_settings; }
+
+void previewBrightness(uint8_t percent) {
+    display::setBrightness(static_cast<int>(clamp_brightness(percent)));
+}
 
 void setBrightness(uint8_t percent) {
     percent = clamp_brightness(percent);

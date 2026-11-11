@@ -61,7 +61,7 @@ bool init() {
 
 void setBrightness(int percent) {
     if (!g_board) return;
-    if (percent < 20) percent = 20;
+    if (percent < 10) percent = 10;  // minimo coerente con lo slider (10%)
     if (percent > 100) percent = 100;
     if (auto* bl = g_board->getBacklight()) {
         bl->setBrightness(percent);

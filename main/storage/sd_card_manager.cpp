@@ -348,7 +348,8 @@ bool SDCardManager::logTelemetry(const char* csv_line) {
     if (!f) return false;
 
     fputs(csv_line, f);
-    if (csv_line[strlen(csv_line) - 1] != '\n') {
+    const size_t len = strlen(csv_line);
+    if (len == 0 || csv_line[len - 1] != '\n') {
         fputc('\n', f);
     }
     fclose(f);

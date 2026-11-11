@@ -144,6 +144,9 @@ const Settings& current();
 /// Aggiorna la luminosita' e la persiste. Applica subito al backlight.
 void setBrightness(uint8_t percent);
 
+/// Applica la luminosita' al pannello senza salvarla in NVS (trascinamento slider).
+void previewBrightness(uint8_t percent);
+
 /// Aggiorna l'unita' di misura temperatura.
 void setTempUnit(TempUnit u);
 
