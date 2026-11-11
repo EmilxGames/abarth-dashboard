@@ -13,6 +13,7 @@
 #include "data/data_store.h"
 #include "display/lvgl_v8_port.h"
 #include "ui_v2/ui_v2.h"
+#include "ui_v2/page_personale.h"
 
 namespace abarth::display { void* debugFramebuffer(); }
 
@@ -74,6 +75,13 @@ void task(void*) {
         for (int k = 0; k < 10; ++k) { fill_demo(); vTaskDelay(pdMS_TO_TICKS(100)); }
         dump(p);
     }
+    // Editor della pagina PERSONALE: modifica e elenco grandezze
+    for (int mode = 1; mode <= 2; ++mode) {
+        if (lvgl_port_lock(-1)) { showPage(Page::Personale); personale::debugMode(mode); lvgl_port_unlock(); }
+        for (int k = 0; k < 10; ++k) { fill_demo(); vTaskDelay(pdMS_TO_TICKS(100)); }
+        dump(10 + mode);
+    }
+    if (lvgl_port_lock(-1)) { personale::debugMode(0); showPage(Page::Guida); lvgl_port_unlock(); }
     vTaskDelete(nullptr);
 }
 }  // namespace

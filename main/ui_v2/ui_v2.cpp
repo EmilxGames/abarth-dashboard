@@ -12,6 +12,7 @@
 #include "display/lvgl_v8_port.h"
 #include "obd/obd_manager.h"
 #include "ui/ui.h"
+#include "ui_v2/page_personale.h"
 #include "ui_v2/pages.h"
 #include "ui_v2/theme.h"
 #include "ui_v2/widgets.h"
@@ -92,6 +93,7 @@ void on_timer(lv_timer_t*) {
 }
 
 void gesture_cb(lv_event_t*) {
+    if (personale::editing()) return;  // nell'editor lo swipe non cambia pagina
     const lv_dir_t d = lv_indev_get_gesture_dir(lv_indev_active());
     const int cur = static_cast<int>(g_current);
     if (d == LV_DIR_LEFT && cur < kPages - 1) showPage(static_cast<Page>(cur + 1));
