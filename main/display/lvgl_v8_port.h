@@ -35,7 +35,7 @@ static inline lv_obj_t* lv_spinner_create(lv_obj_t* parent, uint32_t t, uint32_t
 
 #define LVGL_PORT_TASK_MAX_DELAY_MS             (500)
 #define LVGL_PORT_TASK_MIN_DELAY_MS             (2)
-#define LVGL_PORT_TASK_STACK_SIZE               (8 * 1024)
+#define LVGL_PORT_TASK_STACK_SIZE               (16 * 1024)
 #define LVGL_PORT_TASK_PRIORITY                 (2)
 #define LVGL_PORT_TASK_CORE                     (1)
 
