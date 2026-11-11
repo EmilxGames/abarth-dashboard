@@ -43,7 +43,9 @@ constexpr const char* kKeyCan2En        = "can2_en";
 constexpr const char* kKeyCan2Tx        = "can2_tx";
 constexpr const char* kKeyCan2Rx        = "can2_rx";
 constexpr const char* kKeyCan2Baud      = "can2_baud";
-constexpr const char* kKeyCanListenOnly = "can_l_only";
+// Chiave v2: il vecchio valore "can_l_only" (default false) viene ignorato, cosi'
+// dopo l'aggiornamento il C-CAN riparte sempre in ascolto passivo.
+constexpr const char* kKeyCanListenOnly = "can_lo_v2";
 
 Settings g_settings;
 bool     g_ready = false;

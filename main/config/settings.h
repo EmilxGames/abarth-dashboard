@@ -100,7 +100,7 @@ struct Settings {
     uint8_t   can2_rx_pin         = 33;      ///< GPIO RX TWAI1 (default GPIO 33)
     uint32_t  can2_baud_rate      = 50000;   ///< Baud rate (50 kbps B-CAN Abarth Carrozzeria)
 
-    bool      can_listen_only     = false;   ///< Se true, solo ascolto passivo (nessuna query attiva)
+    bool      can_listen_only     = true;    ///< Se true, solo ascolto passivo (nessuna query attiva). Default sicuro: true
 
     /// Ricerca e connessione automatica OBD all'avvio
     bool      auto_connect = true;
