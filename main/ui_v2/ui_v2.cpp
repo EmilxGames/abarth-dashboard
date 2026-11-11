@@ -19,6 +19,7 @@
 
 namespace abarth::ui_v2 {
 namespace debug_shot { void start(); }
+namespace bench { void start(); }
 
 namespace {
 constexpr const char* TAG = "ui_v2";
@@ -193,6 +194,7 @@ void build() {
     lv_timer_create(on_timer, 50, nullptr);  // 20 Hz: valori aggiornati solo se cambiano
     lv_scr_load(g_scr);
     debug_shot::start();
+    bench::start();
     ESP_LOGI(TAG, "UI v2 Racing costruita (%ldx%ld)", (long)W, (long)H);
     lvgl_port_unlock();
 }

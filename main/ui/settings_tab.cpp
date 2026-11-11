@@ -33,6 +33,7 @@
 #include "storage/ota_updater.h"
 #include "storage/web_server.h"
 #include "storage/telemetry_logger.h"
+#include "config/connection.h"
 #include <sys/stat.h>
 #include "esp_sntp.h"
 
@@ -1006,18 +1007,7 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                     uintptr_t m_val = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
                     settings::ConnectionMode target_m = static_cast<settings::ConnectionMode>(m_val);
                     if (target_m == settings::current().connection_mode) return;
-                    settings::setConnectionMode(target_m);
-                    if (target_m == settings::ConnectionMode::DirectCan) {
-                        // Ferma l'OBD senza cancellare dongle/rete salvati
-                        abarth::obd::obd().stopService();
-                        abarth::can::can().start();
-                    } else if (target_m == settings::ConnectionMode::BleObd) {
-                        abarth::can::can().stop();
-                        abarth::obd::obd().connectBLE();
-                    } else if (target_m == settings::ConnectionMode::WifiObd) {
-                        abarth::can::can().stop();
-                        abarth::obd::obd().connectWiFi();
-                    }
+                    abarth::connection::switchMode(target_m);
                     open_category(0, 0);
                 }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<uintptr_t>(m)));
             };
