@@ -9,6 +9,7 @@
 #include <esp_http_server.h>
 #include <esp_system.h>
 #include <esp_timer.h>
+#include <esp_random.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -22,6 +23,23 @@ namespace abarth::web {
 namespace {
 constexpr const char* TAG = "web_server";
 httpd_handle_t s_server = nullptr;
+esp_timer_handle_t s_auto_stop_timer = nullptr;
+constexpr uint64_t kAutoStopUs = 10ULL * 60ULL * 1000000ULL;  // 10 minuti
+constexpr const char* kLogDir = "/sdcard/logs";
+// Token anti-CSRF generato a ogni avvio del server: le richieste che modificano
+// qualcosa (cancellazione, OTA) devono riportarlo.
+char s_token[17] = {};
+
+bool token_ok(const char* t) {
+    return t && s_token[0] != '\0' && std::strcmp(t, s_token) == 0;
+}
+
+void auto_stop_cb(void*) {
+    ESP_LOGI(TAG, "Timeout 10 minuti: arresto automatico Web Server");
+    // httpd_stop non va chiamato dal task del timer se il server sta servendo
+    // una richiesta lunga: lo facciamo da un task dedicato.
+    xTaskCreate([](void*) { stopServer(); vTaskDelete(nullptr); }, "web_stop", 3072, nullptr, 3, nullptr);
+}
 
 // Helper per estrarre parametro da query string
 bool get_query_param(const char* query, const char* key, char* out_val, size_t max_len) {
@@ -68,12 +86,17 @@ esp_err_t index_get_handler(httpd_req_t *req) {
         "a.btn,button.btn{display:inline-block;background:#E11D48;color:#FFF;text-decoration:none;"
         "padding:7px 14px;border-radius:6px;font-size:13px;font-weight:bold;border:none;cursor:pointer;transition:0.2s;}"
         "a.btn:hover,button.btn:hover{background:#ff2453;}"
-        "a.btn-del{background:#3a1818;color:#ff6666;margin-left:6px;}"
-        "a.btn-del:hover{background:#5a2020;}"
+        ".btn-del{background:#3a1818 !important;color:#ff6666 !important;margin-left:6px;}"
+        ".btn-del:hover{background:#5a2020 !important;}"
         ".progress-bar{height:16px;background:#252535;border-radius:8px;overflow:hidden;margin-top:12px;display:none;}"
         ".progress-fill{height:100%;background:#00CC66;width:0%;transition:width 0.2s;}"
         "#status-msg{margin-top:10px;font-size:13px;color:#AAA;}"
         "</style></head><body><div class='container'>");
+
+    // Token per le richieste che modificano lo stato
+    char tok_chunk[96];
+    snprintf(tok_chunk, sizeof(tok_chunk), "<script>document.body.dataset.token='%s';</script>", s_token);
+    httpd_resp_sendstr_chunk(req, tok_chunk);
 
     // Header Abarth
     httpd_resp_sendstr_chunk(req,
@@ -104,7 +127,7 @@ esp_err_t index_get_handler(httpd_req_t *req) {
         "<div class='card'><div class='card-title'>Sessioni Telemetria Registrate (MicroSD)</div>"
         "<p style='color:#AAA;font-size:13px;margin:0 0 10px 0;'>Scarica i file di telemetria per analizzarli con Excel, MegaLogViewer o software grafici:</p>");
 
-    DIR* d = opendir("/sdcard/telemetry");
+    DIR* d = opendir(kLogDir);
     if (!d) {
         httpd_resp_sendstr_chunk(req, "<p style='color:#8E8E9E;font-size:13px;'>Nessuna cartella di telemetria trovata o MicroSD non montata.</p>");
     } else {
@@ -119,16 +142,18 @@ esp_err_t index_get_handler(httpd_req_t *req) {
             if (!ext || (strcmp(ext, ".csv") != 0 && strcmp(ext, ".CSV") != 0)) continue;
 
             char filepath[320];
-            snprintf(filepath, sizeof(filepath), "/sdcard/telemetry/%s", entry->d_name);
+            snprintf(filepath, sizeof(filepath), "%s/%s", kLogDir, entry->d_name);
             struct stat st;
             size_t fsize = (stat(filepath, &st) == 0) ? st.st_size : 0;
 
-            char row[1024];
+            char row[1600];
             snprintf(row, sizeof(row),
                 "<tr><td><strong>%s</strong></td><td>%.1f KB</td>"
                 "<td><a class='btn' href='/telemetry/download?file=%s'>Scarica</a>"
-                "<a class='btn btn-del' href='/telemetry/delete?file=%s' onclick='return confirm(\"Eliminare questo log?\");'>Elimina</a></td></tr>",
-                entry->d_name, fsize / 1024.0f, entry->d_name, entry->d_name
+                "<form method='post' action='/telemetry/delete' style='display:inline' onsubmit='return confirm(\"Eliminare questo log?\");'>"
+                "<input type='hidden' name='file' value='%s'><input type='hidden' name='token' value='%s'>"
+                "<button class='btn btn-del' type='submit'>Elimina</button></form></td></tr>",
+                entry->d_name, fsize / 1024.0f, entry->d_name, entry->d_name, s_token
             );
             httpd_resp_sendstr_chunk(req, row);
             file_count++;
@@ -172,6 +197,7 @@ esp_err_t index_get_handler(httpd_req_t *req) {
         "  smsg.innerText = 'Inizio caricamento firmware...';"
         "  var xhr = new XMLHttpRequest();"
         "  xhr.open('POST', '/update', true);"
+        "  xhr.setRequestHeader('X-Token', document.body.dataset.token);"
         "  xhr.upload.onprogress = function(e){"
         "    if(e.lengthComputable){"
         "      var pct = Math.round((e.loaded / e.total) * 100);"
@@ -219,7 +245,7 @@ esp_err_t download_handler(httpd_req_t *req) {
     }
 
     char filepath[256];
-    snprintf(filepath, sizeof(filepath), "/sdcard/telemetry/%s", filename);
+    snprintf(filepath, sizeof(filepath), "%s/%s", kLogDir, filename);
 
     FILE* f = fopen(filepath, "rb");
     if (!f) {
@@ -245,17 +271,36 @@ esp_err_t download_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// Handler GET /telemetry/delete?file=...
+// Handler POST /telemetry/delete (body: file=...&token=...)
 esp_err_t delete_handler(httpd_req_t *req) {
-    char query[256] = {};
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
-        char filename[128] = {};
-        if (get_query_param(query, "file", filename, sizeof(filename))) {
-            if (!strstr(filename, "..") && !strchr(filename, '/') && !strchr(filename, '\\')) {
-                char filepath[256];
-                snprintf(filepath, sizeof(filepath), "/sdcard/telemetry/%s", filename);
-                unlink(filepath);
+    char body[256] = {};
+    if (req->content_len == 0 || req->content_len >= sizeof(body)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Richiesta non valida");
+        return ESP_FAIL;
+    }
+    size_t got = 0;
+    while (got < req->content_len) {
+        int r = httpd_req_recv(req, body + got, req->content_len - got);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r <= 0) return ESP_FAIL;
+        got += r;
+    }
+    body[got] = '\0';
+
+    char token[24] = {};
+    if (!get_query_param(body, "token", token, sizeof(token)) || !token_ok(token)) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Token non valido: ricarica la pagina");
+        return ESP_FAIL;
+    }
+    char filename[128] = {};
+    if (get_query_param(body, "file", filename, sizeof(filename))) {
+        if (!strstr(filename, "..") && !strchr(filename, '/') && !strchr(filename, '\\') && !strchr(filename, '%')) {
+            char filepath[256];
+            snprintf(filepath, sizeof(filepath), "%s/%s", kLogDir, filename);
+            if (unlink(filepath) == 0) {
                 ESP_LOGI(TAG, "Cancellato file telemetria: %s", filepath);
+            } else {
+                ESP_LOGW(TAG, "Cancellazione fallita: %s", filepath);
             }
         }
     }
@@ -269,6 +314,11 @@ esp_err_t delete_handler(httpd_req_t *req) {
 
 // Handler POST /update (Web OTA)
 esp_err_t update_post_handler(httpd_req_t *req) {
+    char token[24] = {};
+    if (httpd_req_get_hdr_value_str(req, "X-Token", token, sizeof(token)) != ESP_OK || !token_ok(token)) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Token non valido: ricarica la pagina");
+        return ESP_FAIL;
+    }
     size_t total_size = req->content_len;
     if (total_size == 0 || total_size > 4 * 1024 * 1024) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Dimensione firmware non valida");
@@ -302,7 +352,9 @@ esp_err_t update_post_handler(httpd_req_t *req) {
         err = ota::ota().writeWebOtaChunk(buf, ret);
         if (err != ESP_OK) {
             free(buf);
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Errore scrittura flash OTA");
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                err == ESP_ERR_INVALID_VERSION ? "File non valido per questo dispositivo"
+                                                               : "Errore scrittura flash OTA");
             return ESP_FAIL;
         }
         received += ret;
@@ -343,7 +395,21 @@ esp_err_t startServer() {
     esp_err_t ret = httpd_start(&s_server, &config);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Errore avvio HTTP server: %s", esp_err_to_name(ret));
+        s_server = nullptr;
         return ret;
+    }
+
+    snprintf(s_token, sizeof(s_token), "%08lx%08lx", (unsigned long)esp_random(), (unsigned long)esp_random());
+
+    if (!s_auto_stop_timer) {
+        esp_timer_create_args_t targs = {};
+        targs.callback = &auto_stop_cb;
+        targs.name = "web_autostop";
+        esp_timer_create(&targs, &s_auto_stop_timer);
+    }
+    if (s_auto_stop_timer) {
+        esp_timer_stop(s_auto_stop_timer);
+        esp_timer_start_once(s_auto_stop_timer, kAutoStopUs);
     }
 
     // Registrazione rotte
@@ -365,7 +431,7 @@ esp_err_t startServer() {
 
     httpd_uri_t uri_delete = {
         .uri       = "/telemetry/delete",
-        .method    = HTTP_GET,
+        .method    = HTTP_POST,
         .handler   = delete_handler,
         .user_ctx  = nullptr
     };
@@ -379,11 +445,13 @@ esp_err_t startServer() {
     };
     httpd_register_uri_handler(s_server, &uri_update);
 
-    ESP_LOGI(TAG, "Web Server Abarth avviato su porta 80");
+    ESP_LOGI(TAG, "Web Server Abarth avviato su porta 80 (arresto automatico tra 10 minuti)");
     return ESP_OK;
 }
 
 void stopServer() {
+    if (s_auto_stop_timer) esp_timer_stop(s_auto_stop_timer);
+    s_token[0] = '\0';
     if (s_server) {
         httpd_stop(s_server);
         s_server = nullptr;

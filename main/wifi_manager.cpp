@@ -199,8 +199,8 @@ void WifiManager::eventHandler(void* arg, esp_event_base_t event_base, int32_t e
         // Avvia sincronizzazione oraria NTP via internet per aggiornare RTC hardware
         abarth::storage::rtc().enableNtpSync();
 
-        // Avvia automaticamente il Web Server HTTP su porta 80
-        abarth::web::startServer();
+        // Il Web Server NON parte piu' in automatico: si avvia solo dal pulsante
+        // in Impostazioni (e si spegne da solo dopo 10 minuti).
     }
 }
 

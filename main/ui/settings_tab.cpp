@@ -3099,7 +3099,7 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             char w_stat_buf[128];
             std::snprintf(w_stat_buf, sizeof(w_stat_buf),
                 "Stato Server HTTP: %s",
-                web_active ? "#22C55E ATTIVO (Porta 80)#" : "#EF4444 DISATTIVO#");
+                web_active ? "#22C55E ATTIVO (Porta 80, si spegne dopo 10 min)#" : "#EF4444 DISATTIVO#");
             lv_label_set_recolor(lbl_w_status, true);
             lv_label_set_text(lbl_w_status, w_stat_buf);
             lv_obj_set_style_text_font(lbl_w_status, &lv_font_montserrat_14, 0);
