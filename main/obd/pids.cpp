@@ -113,20 +113,20 @@ bool dec_fuel_level_pct(const uint8_t* d, size_t n, float& out) {
     return true;
 }
 
-// Pressione carburante kPa (PID 0123, vecchia generazione): 2 byte, formula raw.
-// Nota: per diesel e GDI vale raw in kPa; per vecchi MPI e' raw*3.
+// Pressione rail carburante, manometrica (PID 0123, SAE J1979): 10 * (256A+B) kPa.
 bool dec_fuel_pressure_kpa(const uint8_t* d, size_t n, float& out) {
     if (n < 2) return false;
-    out = (d[0] * 256) + d[1];
+    const uint16_t raw = (d[0] << 8) | d[1];
+    out = raw * 10.0f;
     return true;
 }
 
-// Pressione carburante rail relativo al MAP (PID 0159, sensori moderni):
-// 2 byte, formula (raw/1000) ->MPa? No: formula standard = raw*0.079 kPa.
+// Pressione rail carburante assoluta (PID 0159, SAE J1979): 10 * (256A+B) kPa.
+// (0.079 * raw e' la formula del PID 0122, non di questo.)
 bool dec_fuel_rail_pressure_kpa(const uint8_t* d, size_t n, float& out) {
     if (n < 2) return false;
-    uint16_t raw = (d[0] << 8) | d[1];
-    out = raw * 0.079f;   // kPa (pressione relativa al collettore)
+    const uint16_t raw = (d[0] << 8) | d[1];
+    out = raw * 10.0f;
     return true;
 }
 
@@ -145,11 +145,12 @@ bool dec_fuel_temp_c(const uint8_t* d, size_t n, float& out) {
     return true;
 }
 
-// Angolo anticipo iniezione ° (PID 015D): (raw16-26880)/128 gradi.
+// Anticipo iniezione ° (PID 015D, SAE J1979): (256A+B)/128 - 210 gradi,
+// con valore SENZA segno (int16_t andava in overflow sopra 32767).
 bool dec_injection_timing(const uint8_t* d, size_t n, float& out) {
     if (n < 2) return false;
-    int16_t raw = (d[0] << 8) | d[1];
-    out = (raw - 26880) / 128.0f;
+    const uint16_t raw = (d[0] << 8) | d[1];
+    out = raw / 128.0f - 210.0f;
     return true;
 }
 
