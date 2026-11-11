@@ -5,6 +5,7 @@
  */
 
 #include "lvgl_v8_port.h"
+#include "sdkconfig.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -461,17 +462,42 @@ static void lvgl_port_task(void *arg)
     ESP_LOGI(TAG, "LVGL task avviato su Core 1");
 
     uint32_t task_delay_ms = LVGL_PORT_TASK_MAX_DELAY_MS;
+#if CONFIG_ABARTH_SCROLL_BENCH
+    int64_t st_lock = 0, st_run = 0, st_sleep = 0, st_t = esp_timer_get_time();
+#endif
     while (1) {
+#if CONFIG_ABARTH_SCROLL_BENCH
+        int64_t a = esp_timer_get_time();
+#endif
         if (lvgl_port_lock(-1)) {
+#if CONFIG_ABARTH_SCROLL_BENCH
+            int64_t b = esp_timer_get_time();
+            st_lock += b - a;
+#endif
             task_delay_ms = lv_timer_handler();
             lvgl_port_unlock();
+#if CONFIG_ABARTH_SCROLL_BENCH
+            st_run += esp_timer_get_time() - b;
+#endif
         }
+#if CONFIG_ABARTH_SCROLL_BENCH
+        if (esp_timer_get_time() - st_t > 5000000) {
+            ESP_LOGW("BENCH", "task lvgl ultimi 5 s: attesa lock %lld ms, lv_timer_handler %lld ms, sleep %lld ms",
+                     st_lock / 1000, st_run / 1000, st_sleep / 1000);
+            st_lock = st_run = st_sleep = 0;
+            st_t = esp_timer_get_time();
+        }
+        int64_t c = esp_timer_get_time();
+#endif
         if (task_delay_ms > LVGL_PORT_TASK_MAX_DELAY_MS) {
             task_delay_ms = LVGL_PORT_TASK_MAX_DELAY_MS;
         } else if (task_delay_ms < LVGL_PORT_TASK_MIN_DELAY_MS) {
             task_delay_ms = LVGL_PORT_TASK_MIN_DELAY_MS;
         }
         vTaskDelay(pdMS_TO_TICKS(task_delay_ms));
+#if CONFIG_ABARTH_SCROLL_BENCH
+        st_sleep += esp_timer_get_time() - c;
+#endif
     }
 }
 
