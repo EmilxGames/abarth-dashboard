@@ -11,15 +11,15 @@ namespace abarth::ui_v2::setup {
 namespace {
 using namespace abarth::settings;
 const RowInfo kRows[] = {
-    {RowId::Brightness,   "DISPLAY",     "Luminosita'"},
+    {RowId::Brightness,   "DISPLAY",     "Luminosit\xC3\xA0"},
     {RowId::Orientation,  "DISPLAY",     "Orientamento"},
     {RowId::Accent,       "DISPLAY",     "Colore accento"},
     {RowId::UiStyle,      "DISPLAY",     "Stile interfaccia"},
     {RowId::Redline,      "DISPLAY",     "Zona rossa giri"},
-    {RowId::TempUnit,     "UNITA'",      "Temperatura"},
-    {RowId::SpeedUnit,    "UNITA'",      "Velocita'"},
-    {RowId::PressureUnit, "UNITA'",      "Pressione"},
-    {RowId::Connection,   "COLLEGAMENTO","Modalita'"},
+    {RowId::TempUnit,     "UNIT\xC3\x80",      "Temperatura"},
+    {RowId::SpeedUnit,    "UNIT\xC3\x80",      "Velocit\xC3\xA0"},
+    {RowId::PressureUnit, "UNIT\xC3\x80",      "Pressione"},
+    {RowId::Connection,   "COLLEGAMENTO","Modalit\xC3\xA0"},
     {RowId::AutoConnect,  "COLLEGAMENTO","Connessione automatica"},
     {RowId::WebServer,    "STRUMENTI",   "Web Server (10 min)"},
     {RowId::DemoMode,     "STRUMENTI",   "Simulazione dati"},
@@ -36,7 +36,7 @@ void valueText(RowId id, char* out, int n) {
     const Settings s = current();
     switch (id) {
         case RowId::Brightness:   std::snprintf(out, n, "%u %%", s.brightness); break;
-        case RowId::TempUnit:     std::snprintf(out, n, "%s", s.temp_unit == TempUnit::Fahrenheit ? "F" : "C"); break;
+        case RowId::TempUnit:     std::snprintf(out, n, "%s", s.temp_unit == TempUnit::Fahrenheit ? "\xC2\xB0" "F" : "\xC2\xB0" "C"); break;
         case RowId::SpeedUnit:    std::snprintf(out, n, "%s", s.speed_unit == SpeedUnit::Mph ? "mph" : "km/h"); break;
         case RowId::PressureUnit: std::snprintf(out, n, "%s", s.pressure_unit == PressureUnit::Bar ? "bar"
                                                      : s.pressure_unit == PressureUnit::Kpa ? "kPa" : "bar + kPa"); break;
@@ -44,7 +44,7 @@ void valueText(RowId id, char* out, int n) {
                                                      : s.screen_orientation == ScreenOrientation::Portrait ? "Verticale" : "Verticale capovolto"); break;
         case RowId::Connection:   std::snprintf(out, n, "%s", s.connection_mode == ConnectionMode::BleObd ? "OBD Bluetooth"
                                                      : s.connection_mode == ConnectionMode::WifiObd ? "OBD WiFi" : "CAN diretto"); break;
-        case RowId::AutoConnect:  std::snprintf(out, n, "%s", s.auto_connect ? "Si" : "No"); break;
+        case RowId::AutoConnect:  std::snprintf(out, n, "%s", s.auto_connect ? "S\xC3\xAC" : "No"); break;
         case RowId::WebServer:    std::snprintf(out, n, "%s", web::isRunning() ? "Attivo" : "Spento"); break;
         case RowId::DemoMode:     std::snprintf(out, n, "%s", (s.demo_mode && s.debug_mode) ? "Attiva" : "Spenta"); break;
         case RowId::UiStyle:      std::snprintf(out, n, "%s", s.ui_style == UiStyle::Racing ? "Moderno" : "Classica"); break;
@@ -85,11 +85,11 @@ const char* activate(RowId id, bool& needs_reboot) {
         case RowId::WebServer:
             if (web::isRunning()) { web::stopServer(); return nullptr; }
             if (web::startServer() == ESP_ERR_INVALID_STATE) {
-                return "Collega prima il display a una rete WiFi (Impostazioni avanzate > Connettivita').";
+                return "Collega prima il display a una rete WiFi (Impostazioni avanzate > Connettivit\xC3\xA0).";
             }
             return nullptr;
         case RowId::DemoMode:
-            if (!s.debug_mode) return "Attiva prima la Modalita' Debug in Impostazioni avanzate > Test & Simulazione.";
+            if (!s.debug_mode) return "Attiva prima la Modalit\xC3\xA0 Debug in Impostazioni avanzate > Test & Simulazione.";
             setDemoMode(!s.demo_mode);
             return nullptr;
         case RowId::UiStyle:

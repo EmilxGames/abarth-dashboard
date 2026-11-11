@@ -9,7 +9,7 @@ constexpr float N = NAN;
 
 const MetricInfo kCatalog[] = {
     {Metric::Rpm,                 "GIRI",        "Giri motore",               Kind::Plain,    "rpm", 0, 0, 7000, N, 6200},
-    {Metric::Speed,               "VELOCITA'",   "Velocita'",                 Kind::SpeedKmh, "",    0, 0, 220, N, N},
+    {Metric::Speed,               "VELOCIT\xC3\x80",   "Velocit\xC3\xA0",                 Kind::SpeedKmh, "",    0, 0, 220, N, N},
     {Metric::BoostRelBar,         "TURBO",       "Pressione turbo (relativa)",Kind::BoostBar, "bar", 2, -0.5f, 1.8f, N, 1.5f},
     {Metric::BoostKpa,            "MAP",         "Pressione collettore (MAP)",Kind::PressKpa, "",    0, 20, 260, N, N},
     {Metric::Throttle,            "ACCELERATORE","Posizione acceleratore",    Kind::Plain,    "%",   0, 0, 100, N, N},

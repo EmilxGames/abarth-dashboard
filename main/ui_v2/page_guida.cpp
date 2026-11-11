@@ -36,12 +36,12 @@ void build(lv_obj_t* p, int32_t W, int32_t /*H*/, int32_t y0) {
 
     // --- Scheda principale: velocita' + giri
     lv_obj_t* hero = w::card(p, kMargin, y, cw, hero_h);
-    lv_obj_t* l = w::label(hero, "VELOCITA'", fontLabel(), kDim, true);
+    lv_obj_t* l = w::label(hero, "VELOCIT\xC3\x80", fontLabel(), kDim, true);
     lv_obj_set_pos(l, kCardPad, kCardPad);
     g_speed_unit = w::label(hero, "KM/H", fontLabel(), kDim, true);
     lv_obj_align(g_speed_unit, LV_ALIGN_TOP_RIGHT, -kCardPad, kCardPad);
     g_speed = w::label(hero, fmt::kNoData, fontHero(), kDim);
-    lv_obj_set_pos(g_speed, kCardPad - 6, kCardPad + 26);
+    lv_obj_set_pos(g_speed, kCardPad - 4, kCardPad + 44);
     g_speed_col = kDim;
 
     const int32_t bar_y = hero_h - kCardPad - kPillH;

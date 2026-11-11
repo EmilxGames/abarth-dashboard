@@ -8,6 +8,7 @@ idf_component_register(
              "storage"
              "ui"
              "ui_v2"
+             "ui_v2/fonts"
     INCLUDE_DIRS "."
                  "can"
                  "config"

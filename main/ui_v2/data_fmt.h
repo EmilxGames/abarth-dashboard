@@ -23,6 +23,7 @@ inline bool get(data::Metric m, int64_t now_ms, float& out) {
 
 /// Segno meno e trattino "dato assente": U+2212 e U+2013 con i font Manrope,
 /// ASCII con i font provvisori (che non hanno quei caratteri).
+#define ABARTH_V2_MANROPE 1  // font Manrope con ° − – disponibili
 #ifdef ABARTH_V2_MANROPE
 constexpr const char* kMinus  = "\xE2\x88\x92";
 constexpr const char* kNoData = "\xE2\x80\x93";

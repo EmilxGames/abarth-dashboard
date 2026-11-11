@@ -14,6 +14,7 @@
 #include "ui/ui.h"
 #include "ui_v2/page_personale.h"
 #include "ui_v2/pages.h"
+#include "ui_v2/data_fmt.h"
 #include "ui_v2/theme.h"
 #include "ui_v2/widgets.h"
 
@@ -65,9 +66,6 @@ void update_status() {
         const auto st = obd::obd().state();
         col = st == obd::ObdState::Polling ? kOk : (st == obd::ObdState::Error ? kCrit : kWarn);
     }
-#ifndef ABARTH_V2_MANROPE
-    if (std::strstr(txt, "\xC2\xB7")) txt = mode == settings::ConnectionMode::WifiObd ? "WIFI OBD" : "BT OBD";
-#endif
     w::setText(g_conn, txt);
     // pallino a sinistra del testo di collegamento
     const int32_t tw = w::textWidth(txt, fontStatus());
