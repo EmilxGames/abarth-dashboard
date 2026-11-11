@@ -41,8 +41,9 @@ struct Binding {
             const float p = std::pow(10.0f, info->decimals);
             shown = std::round(v * p) / p;
         } else {
-            std::snprintf(t, sizeof(t), "--");
-            if (info->kind == fmt::Kind::TempC) u = settings::tempUnitSymbol();
+            std::snprintf(t, sizeof(t), "%s", fmt::kNoData);
+            if (info->kind == fmt::Kind::TempC)
+                u = settings::current().temp_unit == settings::TempUnit::Fahrenheit ? fmt::kDegF : fmt::kDegC;
             else if (info->kind == fmt::Kind::SpeedKmh) u = settings::speedUnitSymbol();
             else if (info->kind == fmt::Kind::PressKpa) u = settings::pressureUnitSymbol();
             shown = NAN;

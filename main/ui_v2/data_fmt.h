@@ -4,6 +4,7 @@
  * @brief Lettura dei valori dal data store con freschezza e unita' globali.
  */
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include "config/settings.h"
 #include "data/data_store.h"
@@ -20,6 +21,20 @@ inline bool get(data::Metric m, int64_t now_ms, float& out) {
     return true;
 }
 
+/// Segno meno e trattino "dato assente": U+2212 e U+2013 con i font Manrope,
+/// ASCII con i font provvisori (che non hanno quei caratteri).
+#ifdef ABARTH_V2_MANROPE
+constexpr const char* kMinus  = "\xE2\x88\x92";
+constexpr const char* kNoData = "\xE2\x80\x93";
+constexpr const char* kDegC   = "\xC2\xB0" "C";
+constexpr const char* kDegF   = "\xC2\xB0" "F";
+#else
+constexpr const char* kMinus  = "-";
+constexpr const char* kNoData = "-";
+constexpr const char* kDegC   = "C";
+constexpr const char* kDegF   = "F";
+#endif
+
 /// Tipo di grandezza, per conversione unita'
 enum class Kind : uint8_t { Plain, TempC, SpeedKmh, PressKpa, BoostBar };
 
@@ -27,14 +42,19 @@ enum class Kind : uint8_t { Plain, TempC, SpeedKmh, PressKpa, BoostBar };
 inline void format(Kind k, float v, int decimals, const char* plain_unit,
                    char* out, size_t out_sz, const char*& unit) {
     switch (k) {
-        case Kind::TempC:    v = settings::tempInCurrentUnit(v);  unit = settings::tempUnitSymbol(); break;
+        case Kind::TempC:
+            v = settings::tempInCurrentUnit(v);
+            unit = settings::current().temp_unit == settings::TempUnit::Fahrenheit ? kDegF : kDegC;
+            break;
         case Kind::SpeedKmh: v = settings::speedInCurrentUnit(v); unit = settings::speedUnitSymbol(); break;
         case Kind::PressKpa: v = settings::pressureInCurrentUnit(v); unit = settings::pressureUnitSymbol(); break;
         case Kind::BoostBar: unit = "bar"; break;
         default:             unit = plain_unit; break;
     }
-    if (k == Kind::BoostBar) std::snprintf(out, out_sz, "%+.*f", decimals, v);
-    else std::snprintf(out, out_sz, "%.*f", decimals, v);
+    // Negativi con il segno meno tipografico; mai "-0"
+    const float p = (decimals == 0) ? 1.0f : (decimals == 1 ? 10.0f : 100.0f);
+    if (std::round(v * p) < 0) std::snprintf(out, out_sz, "%s%.*f", kMinus, decimals, -v);
+    else std::snprintf(out, out_sz, "%.*f", decimals, std::fabs(v) < 0.5f / p ? 0.0f : v);
 }
 
 }  // namespace abarth::ui_v2::fmt

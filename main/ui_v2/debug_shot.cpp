@@ -21,8 +21,8 @@ namespace {
 void fill_demo() {
     using data::Metric;
     auto& ds = data::store();
-    ds.set(Metric::Rpm, 4870); ds.set(Metric::Speed, 87); ds.set(Metric::BoostRelBar, 0.82f);
-    ds.set(Metric::BoostKpa, 183); ds.set(Metric::CoolantTempC, 91); ds.set(Metric::OilTempC, 104);
+    ds.set(Metric::Rpm, 4870); ds.set(Metric::Speed, 87); ds.set(Metric::BoostRelBar, 1.24f);
+    ds.set(Metric::BoostKpa, 183); ds.set(Metric::CoolantTempC, 88); ds.set(Metric::OilTempC, 104);
     ds.set(Metric::IntakeAirTempC, 34); ds.set(Metric::AmbientTempC, 18); ds.set(Metric::EgtC, 712);
     ds.set(Metric::BatteryVolts, 14.1f); ds.set(Metric::Afr, 13.2f); ds.set(Metric::Throttle, 64);
     ds.set(Metric::EngineLoad, 71); ds.set(Metric::FuelLevelPct, 58); ds.set(Metric::FuelRateLh, 9.4f);

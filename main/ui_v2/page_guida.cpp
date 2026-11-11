@@ -1,10 +1,13 @@
-// Pagina GUIDA: giri (barra + 7 segmenti), velocita', turbo, acqua, olio, batteria.
+// Pagina GUIDA (design "Schede"): velocita' grande + giri con barra a pillola,
+// poi Boost / Acqua e Olio / Batteria. Solo valori, barre e pallini si ridisegnano.
+#include <cmath>
 #include <cstdio>
 #include "lvgl.h"
 #include "config/settings.h"
-#include "config/warmup_manager.h"
-#include "ui_v2/data_fmt.h"
+#include "ui_v2/alert_levels.h"
+#include "ui_v2/binding.h"
 #include "ui_v2/page_guida.h"
+#include "ui_v2/data_fmt.h"
 #include "ui_v2/theme.h"
 #include "ui_v2/widgets.h"
 
@@ -14,147 +17,93 @@ namespace {
 using namespace theme;
 using data::Metric;
 
-constexpr float kRpmMax      = 7000.0f;  ///< fondo scala barra giri
-constexpr float kShiftRpm    = 6200.0f;  ///< da qui lampeggia (limitatore)
-
-w::SegBar   g_rpm_bar;
-w::SevenSeg g_rpm;
-w::SevenSeg g_speed;
-lv_obj_t*   g_speed_unit = nullptr;
-lv_obj_t*   g_boost_val = nullptr;
-lv_obj_t*   g_boost_unit = nullptr;
-uint32_t    g_boost_col = 0;
-w::HBar     g_boost_bar;
-w::Tile     g_water, g_oil, g_batt;
-lv_obj_t*   g_thr_val = nullptr;
-w::HBar     g_thr_bar;
+lv_obj_t*    g_speed = nullptr;
+lv_obj_t*    g_speed_unit = nullptr;
+lv_obj_t*    g_rpm = nullptr;
+uint32_t     g_speed_col = 0, g_rpm_col = 0;
+w::PillBar   g_rpm_bar;
+w::ValueCard g_boost, g_water, g_oil, g_batt;
+Binding      b_speed, b_rpm, b_boost, b_water, b_oil, b_batt;
 }  // namespace
 
-void build(lv_obj_t* p, int32_t W, int32_t H) {
-    const int32_t m = 16;          // margine laterale
-    const int32_t inner = W - 2 * m;
+void build(lv_obj_t* p, int32_t W, int32_t /*H*/, int32_t y0) {
+    // Le misure del design sono in coordinate schermo: y0 = top della pagina
+    const int32_t cw = W - 2 * kMargin;
+    const int32_t total = kCardsBot - kCardsTop - 2 * kGap;
+    const int32_t small_h = static_cast<int32_t>(total / 3.55f);
+    const int32_t hero_h = total - 2 * small_h;
+    int32_t y = kCardsTop - y0;
 
-    // 1. Barra giri a segmenti
-    int32_t y = 14;
-    g_rpm_bar.create(p, m, y, inner, 64, 40, 4, 0.65f, 0.85f);
-    y += 64 + 22;
+    // --- Scheda principale: velocita' + giri
+    lv_obj_t* hero = w::card(p, kMargin, y, cw, hero_h);
+    lv_obj_t* l = w::label(hero, "VELOCITA'", fontLabel(), kDim, true);
+    lv_obj_set_pos(l, kCardPad, kCardPad);
+    g_speed_unit = w::label(hero, "KM/H", fontLabel(), kDim, true);
+    lv_obj_align(g_speed_unit, LV_ALIGN_TOP_RIGHT, -kCardPad, kCardPad);
+    g_speed = w::label(hero, fmt::kNoData, fontHero(), kDim);
+    lv_obj_set_pos(g_speed, kCardPad - 6, kCardPad + 26);
+    g_speed_col = kDim;
 
-    // 2. Giri grandi a 7 segmenti, centrati
-    const int32_t dh = 176, dw = 100, t = 18, gap = 18;
-    const int32_t rpm_w = 4 * dw + 3 * gap;
-    g_rpm.create(p, (W - rpm_w) / 2, y, 4, dw, dh, t, gap, kText, kSegOff);
-    lv_obj_t* l = w::label(p, "GIRI / MIN", fontSmall(), kMuted);
-    lv_obj_set_pos(l, (W - rpm_w) / 2, y + dh + 8);
-    y += dh + 40;
+    const int32_t bar_y = hero_h - kCardPad - kPillH;
+    g_rpm_bar.create(hero, kCardPad, bar_y, cw - 2 * kCardPad);
+    const int32_t row_y = bar_y - 14 - lv_font_get_line_height(fontMedium());
+    lv_obj_t* gl = w::label(hero, "GIRI", fontLabel(), kDim, true);
+    lv_obj_set_pos(gl, kCardPad, row_y + (lv_font_get_line_height(fontMedium()) - lv_font_get_line_height(fontLabel())) / 2);
+    g_rpm = w::label(hero, fmt::kNoData, fontMedium(), kDim);
+    lv_obj_set_style_text_align(g_rpm, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_width(g_rpm, 220);  // riquadro fisso: le cifre non spostano nulla
+    lv_obj_set_pos(g_rpm, cw - kCardPad - 220, row_y);
+    g_rpm_col = kDim;
+    y += hero_h + kGap;
 
-    // 3. Velocita' e turbo
-    const int32_t half_w = (inner - kGap) / 2;
-    const int32_t row_h = 210;
-    lv_obj_t* sp = w::box(p, m, y, half_w, row_h, kPanel);
-    w::box(sp, 0, 0, 4, row_h, kRed);
-    lv_obj_t* st = w::label(sp, "VELOCITA'", fontSmall(), kMuted);
-    lv_obj_set_pos(st, kPad + 4, kPad - 2);
-    const int32_t sdh = 120, sdw = 66, st_t = 14, sgap = 12;
-    const int32_t sp_w = 3 * sdw + 2 * sgap;
-    g_speed.create(sp, (half_w - sp_w) / 2 + 2, 44, 3, sdw, sdh, st_t, sgap, kText, kSegOff);
-    g_speed_unit = w::label(sp, "", fontSmall(), kMuted);
-    lv_obj_align(g_speed_unit, LV_ALIGN_BOTTOM_RIGHT, -kPad, -kPad + 2);
+    // --- Due righe di schede piccole
+    const int32_t half = (cw - kGap) / 2;
+    g_boost.create(p, kMargin, y, half, small_h, "BOOST", true);
+    g_water.create(p, kMargin + half + kGap, y, cw - half - kGap, small_h, "ACQUA", true);
+    y += small_h + kGap;
+    g_oil.create(p, kMargin, y, half, small_h, "OLIO", true);
+    g_batt.create(p, kMargin + half + kGap, y, cw - half - kGap, small_h, "BATTERIA", true);
 
-    lv_obj_t* bo = w::box(p, m + half_w + kGap, y, half_w, row_h, kPanel);
-    w::box(bo, 0, 0, 4, row_h, kRed);
-    lv_obj_t* bt = w::label(bo, "TURBO", fontSmall(), kMuted);
-    lv_obj_set_pos(bt, kPad + 4, kPad - 2);
-    g_boost_val = w::label(bo, "--", fontHuge(), kText);
-    lv_obj_set_pos(g_boost_val, kPad + 4, 64);
-    g_boost_unit = w::label(bo, "bar", fontSmall(), kMuted);
-    lv_obj_align(g_boost_unit, LV_ALIGN_TOP_RIGHT, -kPad, kPad - 2);
-    g_boost_bar.create(bo, kPad + 4, row_h - 34, half_w - 2 * kPad - 4, 14, -0.5f, 1.8f, kRed);
-    y += row_h + kGap;
-
-    // 4. Acqua, olio, batteria
-    const int32_t tw = (inner - 2 * kGap) / 3;
-    const int32_t th = 190;
-    g_water.create(p, m, y, tw, th, "ACQUA", fontHuge());
-    g_oil.create(p, m + tw + kGap, y, tw, th, "OLIO", fontHuge());
-    g_batt.create(p, m + 2 * (tw + kGap), y, inner - 2 * (tw + kGap), th, "BATTERIA", fontHuge());
-    y += th + kGap;
-
-    // 5. Acceleratore (barra a tutta larghezza nello spazio rimanente)
-    const int32_t ah = H - y - 14;
-    lv_obj_t* ac = w::box(p, m, y, inner, ah, kPanel);
-    w::box(ac, 0, 0, 4, ah, kRed);
-    lv_obj_t* at = w::label(ac, "ACCELERATORE", fontSmall(), kMuted);
-    lv_obj_set_pos(at, kPad + 4, kPad - 2);
-    g_thr_val = w::label(ac, "--", fontMedium(), kText);
-    lv_obj_align(g_thr_val, LV_ALIGN_TOP_RIGHT, -kPad, kPad - 6);
-    g_thr_bar.create(ac, kPad + 4, ah - 30, inner - 2 * kPad - 4, 16, 0.0f, 100.0f, kGreen);
+    b_speed.bind(Metric::Speed);
+    b_rpm.bind(Metric::Rpm);
+    b_boost.bind(Metric::BoostRelBar);
+    b_water.bind(Metric::CoolantTempC);
+    b_oil.bind(Metric::OilTempC);
+    b_batt.bind(Metric::BatteryVolts);
 }
 
 void update(int64_t now_ms) {
-    float v = 0;
-    char buf[16];
-    const char* unit = "";
-
-    // Giri
-    const bool rpm_ok = fmt::get(Metric::Rpm, now_ms, v);
-    const float rpm = rpm_ok ? v : 0.0f;
-    const bool flash = rpm_ok && rpm >= kShiftRpm;
-    const bool phase = ((now_ms / 125) & 1) != 0;   // 4 Hz
-    g_rpm_bar.set(rpm / kRpmMax, flash, phase);
-    g_rpm.set(rpm_ok ? static_cast<int32_t>(rpm / 10.0f + 0.5f) * 10 : -1);  // passo 10 giri
-    g_rpm.setOnColor(flash ? kRed : kText);
-
     // Velocita'
-    if (fmt::get(Metric::Speed, now_ms, v)) {
-        g_speed.set(static_cast<int32_t>(settings::speedInCurrentUnit(v) + 0.5f));
-    } else {
-        g_speed.set(-1);
+    if (b_speed.update(now_ms)) {
+        w::setText(g_speed, b_speed.level == Level::Missing ? fmt::kNoData : b_speed.text);
+        w::setColor(g_speed, b_speed.level == Level::Missing ? kDim : kText, g_speed_col);
+        char u[12];
+        std::snprintf(u, sizeof(u), "%s", b_speed.unit);
+        for (char* c = u; *c; ++c) if (*c >= 'a' && *c <= 'z') *c = *c - 'a' + 'A';
+        w::setText(g_speed_unit, u);
     }
-    w::setText(g_speed_unit, settings::speedUnitSymbol());
 
-    // Turbo (bar relativi)
-    const bool b_ok = fmt::get(Metric::BoostRelBar, now_ms, v);
-    if (b_ok) {
-        std::snprintf(buf, sizeof(buf), "%+.2f", v);
-        w::setText(g_boost_val, buf);
-        w::setColor(g_boost_val, v > 1.5f ? kRed : kText, g_boost_col);
-    } else {
-        w::setText(g_boost_val, "--");
-        w::setColor(g_boost_val, kMuted, g_boost_col);
-    }
-    g_boost_bar.set(v, b_ok);
+    // Giri: valore a passi di 10, barra rossa dalla soglia configurata
+    const float redline = settings::current().redline_rpm;
+    b_rpm.update(now_ms);
+    const bool rpm_ok = b_rpm.level != Level::Missing;
+    char rbuf[12];
+    if (rpm_ok) std::snprintf(rbuf, sizeof(rbuf), "%d", static_cast<int>(b_rpm.value / 10.0f + 0.5f) * 10);
+    w::setText(g_rpm, rpm_ok ? rbuf : fmt::kNoData);
+    const bool red = rpm_ok && b_rpm.value >= redline;
+    w::setColor(g_rpm, !rpm_ok ? kDim : (red ? kCrit : kText), g_rpm_col);
+    g_rpm_bar.set(rpm_ok ? b_rpm.value / 7000.0f : NAN, red ? kCrit : accent());
 
-    // Acqua
-    if (fmt::get(Metric::CoolantTempC, now_ms, v)) {
-        fmt::format(fmt::Kind::TempC, v, 0, "", buf, sizeof(buf), unit);
-        g_water.set(buf, unit, v > 105.0f ? kRed : (v < 60.0f ? kBlue : kText));
-    } else {
-        g_water.set("--", settings::tempUnitSymbol(), kMuted);
-    }
-    // Olio: reale se disponibile, altrimenti stima del warmup
-    if (fmt::get(Metric::OilTempC, now_ms, v)) {
-        fmt::format(fmt::Kind::TempC, v, 0, "", buf, sizeof(buf), unit);
-        g_oil.set(buf, unit, v > 125.0f ? kRed : (v < 70.0f ? kBlue : kText));
-    } else {
-        g_oil.set("--", settings::tempUnitSymbol(), kMuted);
-    }
-    // Acceleratore
-    const bool t_ok = fmt::get(Metric::Throttle, now_ms, v);
-    if (t_ok) {
-        std::snprintf(buf, sizeof(buf), "%.0f %%", v);
-        w::setText(g_thr_val, buf);
-    } else {
-        w::setText(g_thr_val, "--");
-    }
-    g_thr_bar.set(static_cast<float>(static_cast<int>(v)), t_ok);  // passo 1 %
-
-    // Batteria
-    if (fmt::get(Metric::BatteryVolts, now_ms, v)) {
-        std::snprintf(buf, sizeof(buf), "%.1f", v);
-        g_batt.set(buf, "V", (v < 12.0f || v > 15.0f) ? kYellow : kText);
-    } else {
-        g_batt.set("--", "V", kMuted);
-    }
+    // Schede piccole con pallino dalle soglie d'allarme
+    auto upd = [&](Binding& b, w::ValueCard& card) {
+        if (b.update(now_ms) || true) {
+            card.set(b, b.level == Level::Missing ? Level::Missing : alertLevel(b.info->metric, b.value));
+        }
+    };
+    upd(b_boost, g_boost);
+    upd(b_water, g_water);
+    upd(b_oil, g_oil);
+    upd(b_batt, g_batt);
 }
 
 }  // namespace abarth::ui_v2::guida

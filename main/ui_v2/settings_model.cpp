@@ -44,7 +44,7 @@ void valueText(RowId id, char* out, int n) {
         case RowId::AutoConnect:  std::snprintf(out, n, "%s", s.auto_connect ? "Si" : "No"); break;
         case RowId::WebServer:    std::snprintf(out, n, "%s", web::isRunning() ? "Attivo" : "Spento"); break;
         case RowId::DemoMode:     std::snprintf(out, n, "%s", (s.demo_mode && s.debug_mode) ? "Attiva" : "Spenta"); break;
-        case RowId::UiStyle:      std::snprintf(out, n, "%s", s.ui_style == UiStyle::Racing ? "Racing" : "Classica"); break;
+        case RowId::UiStyle:      std::snprintf(out, n, "%s", s.ui_style == UiStyle::Racing ? "Moderno" : "Classica"); break;
         default:                  if (n > 0) out[0] = 0; break;
     }
 }

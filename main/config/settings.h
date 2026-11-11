@@ -42,7 +42,7 @@ enum class UiTheme : uint8_t {
 /// Stile complessivo dell'interfaccia (scelta dell'utente, si applica al riavvio).
 enum class UiStyle : uint8_t {
     Classic = 0,  ///< Interfaccia attuale (main/ui)
-    Racing  = 1,  ///< Nuova interfaccia ad alte prestazioni (main/ui_v2)
+    Racing  = 1,  ///< Nuova interfaccia "Moderno" ad alte prestazioni (main/ui_v2)
 };
 
 /// Texture di sfondo dello schermo.
@@ -83,7 +83,9 @@ struct Settings {
     PressureUnit pressure_unit = PressureUnit::Bar;
     /// Stile grafico dell'interfaccia.
     UiTheme   ui_theme     = UiTheme::MinimalFunctional;
-    UiStyle      ui_style     = UiStyle::Classic;  ///< Classico o nuova UI Racing
+    UiStyle      ui_style     = UiStyle::Classic;  ///< Classico o nuova UI Moderno
+    uint8_t      ui_accent    = 0;     ///< UI Moderno: 0 bianco, 1 rosso, 2 azzurro, 3 ambra
+    uint16_t     redline_rpm  = 6200;  ///< UI Moderno: giri da cui la barra diventa rossa
     /// Texture di sfondo.
     BgTexture bg_texture   = BgTexture::Original;
     /// Orientamento schermo (orizzontale/verticale/verticale capovolto).
@@ -175,6 +177,10 @@ void setUiTheme(UiTheme t);
 
 /// Imposta lo stile dell'interfaccia (applicato al prossimo avvio).
 void setUiStyle(UiStyle style);
+
+/// Colore accento e soglia giri della UI Moderno.
+void setUiAccent(uint8_t idx);
+void setRedlineRpm(uint16_t rpm);
 
 /// Flag di sicurezza della nuova UI: impostato prima di costruirla, azzerato
 /// dopo 10 s senza crash. Se all'avvio e' ancora impostato si torna al Classico.
