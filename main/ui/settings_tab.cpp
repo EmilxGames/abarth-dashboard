@@ -3307,8 +3307,19 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             lv_obj_add_event_cb(btn_toggle_web, [](lv_event_t*) {
                 if (abarth::web::isRunning()) {
                     abarth::web::stopServer();
-                } else {
-                    abarth::web::startServer();
+                } else if (abarth::web::startServer() == ESP_ERR_INVALID_STATE) {
+                    create_modal("Web Server");
+                    lv_obj_t* m = lv_label_create(g_modal_body);
+                    lv_label_set_text(m, "Collega prima il display a una rete WiFi\n(Impostazioni > Connessione > WiFi),\npoi avvia il Web Server.");
+                    lv_obj_set_style_text_color(m, lv_color_hex(0xFFFFFF), 0);
+                    lv_obj_set_style_text_font(m, &lv_font_montserrat_14, 0);
+                    lv_obj_t* b = lv_btn_create(g_modal_body);
+                    lv_obj_set_size(b, 140, 40);
+                    lv_obj_t* l = lv_label_create(b);
+                    lv_label_set_text(l, "OK");
+                    lv_obj_center(l);
+                    lv_obj_add_event_cb(b, close_modal, LV_EVENT_CLICKED, nullptr);
+                    return;
                 }
                 render_category(g_current_cat, 0);
             }, LV_EVENT_CLICKED, nullptr);

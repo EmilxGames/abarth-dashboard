@@ -384,6 +384,12 @@ esp_err_t startServer() {
     if (s_server != nullptr) {
         return ESP_OK;
     }
+    // Senza rete lo stack TCP/IP puo' non essere inizializzato: httpd_start
+    // andrebbe in assert (Invalid mbox) e riavvierebbe il display.
+    if (!wifi::WifiManager::instance().isConnected()) {
+        ESP_LOGW(TAG, "Web Server non avviato: WiFi non connesso");
+        return ESP_ERR_INVALID_STATE;
+    }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
