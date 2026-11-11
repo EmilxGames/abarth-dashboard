@@ -371,9 +371,9 @@ void wifi_connect_btn_cb(lv_event_t* e) {
     lv_obj_set_size(spinner, 60, 60);
     lv_obj_center(spinner);
 
-    abarth::wifi::WifiManager::instance().connect(ssid, pw.c_str(), [ssid_str = std::string(ssid)](bool ok, const std::string& ip_in, const std::string& gw_in){
+    abarth::wifi::WifiManager::instance().connect(ssid, pw.c_str(), [ssid_str = std::string(ssid), pw](bool ok, const std::string& ip_in, const std::string& gw_in){
       // Chiamata dal task eventi WiFi: la UI si aggiorna nel task LVGL
-      post_to_ui([ssid_str, ok, ip = ip_in, gw_ip = gw_in]() {
+      post_to_ui([ssid_str, pw, ok, ip = ip_in, gw_ip = gw_in]() {
         close_modal(nullptr);
         
         lv_obj_t* res_modal = create_modal("Risultato Connessione");
@@ -382,7 +382,8 @@ void wifi_connect_btn_cb(lv_event_t* e) {
             lv_label_set_text_fmt(lbl, "Connesso con successo!\nIP: %s", ip.c_str());
             lv_obj_set_style_text_color(lbl, lv_color_hex(0x00FF00), 0);
             ESP_LOGI(TAG, "WiFi connesso. IP: %s, GW: %s", ip.c_str(), gw_ip.c_str());
-            settings::setSavedWifi(ssid_str, ""); 
+            // Salva la password inserita: serve per riconnettersi da soli a reti protette
+            settings::setSavedWifi(ssid_str, pw);
             abarth::obd::obd().connectWiFi(gw_ip, 35000); 
         } else {
             lv_label_set_text(lbl, "Errore di connessione.\nVerifica la password o riprova.");
