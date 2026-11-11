@@ -47,6 +47,8 @@ bool lvgl_port_init(esp_panel::drivers::LCD *lcd, esp_panel::drivers::Touch *tp)
 bool lvgl_port_deinit(void);
 bool lvgl_port_lock(int timeout_ms);
 bool lvgl_port_unlock(void);
+/// Numero di frame completi inviati al display (per misure FPS)
+uint32_t lvgl_port_get_frame_count(void);
 
 #ifdef __cplusplus
 }

@@ -27,4 +27,7 @@ void build(lv_obj_t* tab);
 /// Va chiamato dal timer UI generale.
 void tick();
 
+/// Contenitore scrollabile dell'elenco categorie (usato dal benchmark FPS).
+lv_obj_t* scroll_target();
+
 }  // namespace abarth::ui::settings_tab

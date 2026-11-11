@@ -76,6 +76,7 @@ lv_obj_t* g_detail_badge_ico     = nullptr;
 lv_obj_t* g_detail_title_lbl     = nullptr;
 lv_obj_t* g_detail_sub_lbl       = nullptr;
 lv_obj_t* g_content_panel        = nullptr;
+lv_obj_t* g_menu_grid            = nullptr;
 static uint8_t g_current_cat     = 0;
 static uint8_t g_subcat_metric   = 0;
 
@@ -4456,6 +4457,7 @@ void build(lv_obj_t* tab) {
 
     // Griglia Categorie (2 colonne in landscape, 1 colonna in portrait)
     lv_obj_t* grid_cont = lv_obj_create(g_menu_page);
+    g_menu_grid = grid_cont;
     lv_obj_remove_style_all(grid_cont);
     lv_obj_set_width(grid_cont, LV_PCT(100));
     lv_obj_set_flex_grow(grid_cont, 1);
@@ -4939,5 +4941,7 @@ void tick() {
         }
     }
 }
+
+lv_obj_t* scroll_target() { return g_menu_grid; }
 
 }  // namespace abarth::ui::settings_tab

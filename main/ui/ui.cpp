@@ -19,6 +19,7 @@
 #include <esp_heap_caps.h>
 #include "storage/sd_card_manager.h"
 #include "ui/settings_tab.h"
+#include "ui/scroll_bench.h"
 #include "ui/abarth_logo_png.h"
 #include "ui/oil_blue_png.h"
 
@@ -2298,6 +2299,7 @@ void build() {
 
     /* Impostazioni --------------------------------------------------------- */
     settings_tab::build(t_set);
+    scroll_bench::start(tabview, 6, settings_tab::scroll_target());
 
     /* Applica visibilità iniziale configurata ------------------------------ */
     apply_metric_visibility();

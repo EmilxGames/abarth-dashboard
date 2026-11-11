@@ -1,0 +1,11 @@
+menu "Abarth Dashboard - debug"
+
+    config ABARTH_SCROLL_BENCH
+        bool "Benchmark FPS con scroll automatico delle Impostazioni"
+        default n
+        help
+            Solo per sviluppo. Dopo l'avvio apre la scheda Impostazioni e fa
+            scorrere in automatico l'elenco delle categorie, stampando sul log
+            seriale gli FPS reali (frame completi al secondo) per 20 secondi.
+
+endmenu

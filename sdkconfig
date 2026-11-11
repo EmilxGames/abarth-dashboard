@@ -687,6 +687,12 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
+# Abarth Dashboard - debug
+#
+# CONFIG_ABARTH_SCROLL_BENCH is not set
+# end of Abarth Dashboard - debug
+
+#
 # Compiler options
 #
 # CONFIG_COMPILER_OPTIMIZATION_DEBUG is not set

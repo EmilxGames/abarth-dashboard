@@ -31,6 +31,7 @@ static void *lvgl_buf[LVGL_PORT_BUFFER_NUM] = { nullptr };
 
 static lv_display_t *g_disp = nullptr;
 static lv_indev_t *g_indev = nullptr;
+static volatile uint32_t g_frame_count = 0;
 
 // Fast L1 SRAM scratchpad for tiled rotation (4 KB total, static in internal DRAM BSS)
 alignas(16) static uint16_t s_tile_in[32][32];
@@ -170,6 +171,7 @@ static void flush_callback(lv_display_t *disp, const lv_area_t *area, uint8_t *p
         safe_draw_bitmap(lcd, x1, y1, w, h, px_map);
     }
 
+    if (lv_display_flush_is_last(disp)) g_frame_count++;
     lv_display_flush_ready(disp);
 }
 
@@ -423,4 +425,9 @@ bool lvgl_port_unlock(void)
 {
     if (!lvgl_mux) return false;
     return (xSemaphoreGiveRecursive(lvgl_mux) == pdTRUE);
+}
+
+uint32_t lvgl_port_get_frame_count(void)
+{
+    return g_frame_count;
 }
