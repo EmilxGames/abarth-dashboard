@@ -45,7 +45,8 @@ static ppa_client_handle_t s_ppa = nullptr;
 static SemaphoreHandle_t s_ppa_done = nullptr;
 static uint16_t *s_fb = nullptr;
 static size_t s_fb_size = 0;
-static bool s_use_ppa = false;
+static volatile bool s_use_ppa = false;
+static uint32_t s_ppa_fail_count = 0;
 static ppa_srm_rotation_angle_t s_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
 
 // Fast L1 SRAM scratchpad for tiled rotation (4 KB total, static in internal DRAM BSS)
@@ -135,8 +136,11 @@ static bool IRAM_ATTR ppa_trans_done_cb(ppa_client_handle_t, ppa_event_data_t *,
 // Chiamata da LVGL quando deve riusare un buffer ancora in flush
 static void flush_wait_cb(lv_display_t *disp)
 {
-    if (xSemaphoreTake(s_ppa_done, pdMS_TO_TICKS(200)) != pdTRUE) {
-        ESP_LOGW(TAG, "timeout attesa PPA");
+    if (xSemaphoreTake(s_ppa_done, pdMS_TO_TICKS(500)) != pdTRUE) {
+        // La transazione non e' mai finita: la PPA e' bloccata. Passiamo per
+        // sempre alla rotazione software per non congelare lo schermo.
+        ESP_LOGE(TAG, "timeout attesa PPA: passo alla rotazione software");
+        s_use_ppa = false;
     }
 }
 
@@ -283,6 +287,10 @@ static void flush_callback(lv_display_t *disp, const lv_area_t *area, uint8_t *p
             return;  // lv_display_flush_ready implicito in flush_wait_cb
         }
         ESP_LOGW(TAG, "PPA fallita, fallback software per questo flush");
+        if (++s_ppa_fail_count >= 3) {
+            ESP_LOGE(TAG, "PPA fallita 3 volte: passo alla rotazione software");
+            s_use_ppa = false;
+        }
     }
 
     if (g_rotation_degree != 0 && in_bounds) {
