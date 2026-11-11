@@ -27,6 +27,7 @@
 #include "ui/ui.h"
 
 #include <esp_ota_ops.h>
+#include <driver/gpio.h>
 
 static constexpr const char* TAG = "main";
 
@@ -47,6 +48,19 @@ static void heartbeat_task(void* /*arg*/) {
 }
 
 extern "C" void app_main(void) {
+    // Tieni il pannello LCD (JD9165) in reset per tutta la prima fase di avvio
+    // (~3 s di esp_hosted). Dopo un reset software (USB, OTA, panic) il pannello
+    // resta alimentato e a volte non riparte con il solo impulso di 10 ms del
+    // driver: un reset lungo lo avvicina a una vera riaccensione.
+    // GPIO5 = LCD_RST (attivo basso), poi gestito di nuovo dal driver del pannello.
+    {
+        gpio_config_t io = {};
+        io.pin_bit_mask = 1ULL << GPIO_NUM_5;
+        io.mode = GPIO_MODE_OUTPUT;
+        gpio_config(&io);
+        gpio_set_level(GPIO_NUM_5, 0);
+    }
+
     // Inizializza NVS (necessario per WiFi/BLE e impostazioni utente)
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
