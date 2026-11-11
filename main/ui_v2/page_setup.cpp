@@ -98,6 +98,7 @@ void build(lv_obj_t* parent, int32_t W, int32_t H) {
     g_h = H;
     // Lista scorrevole verticale, senza rimbalzi (meno ridisegni)
     g_list = w::box(parent, 0, 0, W, H, kBg);
+    lv_obj_set_style_bg_opa(g_list, LV_OPA_TRANSP, 0);
     lv_obj_add_flag(g_list, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(g_list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(g_list, LV_SCROLLBAR_MODE_OFF);
@@ -128,7 +129,10 @@ void build(lv_obj_t* parent, int32_t W, int32_t H) {
             if (k > i) { w::box(card, kCardPad, ry, cw - 2 * kCardPad, 1, kRowLine); ry += 1; }
             const int32_t rh = id == RowId::Brightness ? kRowH + 56 : kRowH;
             lv_obj_t* row = w::box(card, 0, ry, cw, rh, kCard);
-            // angoli arrotondati solo su prima/ultima riga per seguire la scheda
+            // riga trasparente (la scheda sotto ha gia' il colore): si colora solo
+            // quando e' premuta, cosi' non si ridisegna due volte la stessa area
+            lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
             if (k == i || k == j - 1) lv_obj_set_style_radius(row, kRadius, 0);
             lv_obj_t* l = w::label(row, rows[k].title, fontBody(), kText);
             lv_obj_set_pos(l, kCardPad, (kRowH - lv_font_get_line_height(fontBody())) / 2);
@@ -193,6 +197,8 @@ void build(lv_obj_t* parent, int32_t W, int32_t H) {
 
     refresh_values();
 }
+
+lv_obj_t* scrollTarget() { return g_list; }
 
 void update(int64_t now_ms) {
     static int64_t last = 0;

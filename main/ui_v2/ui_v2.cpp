@@ -145,6 +145,8 @@ void build() {
 
     for (int i = 0; i < kPages; ++i) {
         g_pages[i] = w::box(g_scr, 0, kPageTop, W, kPageBottom - kPageTop, kBg);
+        // trasparente: lo sfondo e' quello dello schermo, una passata in meno
+        lv_obj_set_style_bg_opa(g_pages[i], LV_OPA_TRANSP, 0);
         lv_obj_add_flag(g_pages[i], LV_OBJ_FLAG_HIDDEN);
         pages::build(static_cast<Page>(i), g_pages[i], W, kPageBottom - kPageTop, kPageTop);
     }

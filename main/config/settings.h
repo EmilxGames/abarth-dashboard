@@ -185,6 +185,9 @@ void setRedlineRpm(uint16_t rpm);
 /// Flag di sicurezza della nuova UI: impostato prima di costruirla, azzerato
 /// dopo 10 s senza crash. Se all'avvio e' ancora impostato si torna al Classico.
 bool isUiV2Pending();
+/// Avvii consecutivi terminati con crash/watchdog (per il ritorno alla Classica)
+uint8_t bootFailCount();
+void setBootFailCount(uint8_t n);
 void setUiV2Pending(bool pending);
 
 /// Aggiorna la texture di sfondo dello schermo.

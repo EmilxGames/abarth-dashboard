@@ -187,6 +187,20 @@ extern "C" void app_main(void) {
     // Scelta interfaccia: Classica o v2 Racing, con ritorno automatico alla
     // Classica se la v2 si e' piantata nei primi 10 s dell'avvio precedente.
     bool use_v2 = abarth::settings::current().ui_style == abarth::settings::UiStyle::Racing;
+    {
+        // Conta gli avvii consecutivi finiti con crash o watchdog (in qualunque
+        // punto, anche prima della UI): dopo 2 di fila si torna alla Classica.
+        const esp_reset_reason_t rr = esp_reset_reason();
+        const bool crashed = rr == ESP_RST_PANIC || rr == ESP_RST_INT_WDT || rr == ESP_RST_TASK_WDT || rr == ESP_RST_WDT;
+        uint8_t fails = crashed ? abarth::settings::bootFailCount() + 1 : 0;
+        abarth::settings::setBootFailCount(fails);
+        if (use_v2 && fails >= 2) {
+            DIAG("%u avvii falliti di fila: torno alla UI Classica", fails);
+            abarth::settings::setUiStyle(abarth::settings::UiStyle::Classic);
+            abarth::settings::setUiV2Pending(false);
+            use_v2 = false;
+        }
+    }
     if (use_v2 && abarth::settings::isUiV2Pending()) {
         DIAG("UI v2 non confermata all'avvio precedente: torno alla UI Classica");
         abarth::settings::setUiStyle(abarth::settings::UiStyle::Classic);
@@ -201,6 +215,7 @@ extern "C" void app_main(void) {
         esp_timer_create_args_t ta = {};
         ta.callback = [](void*) {
             abarth::settings::setUiV2Pending(false);
+            abarth::settings::setBootFailCount(0);
             ESP_LOGI(TAG, "UI v2 confermata stabile");
         };
         ta.name = "ui_v2_ok";

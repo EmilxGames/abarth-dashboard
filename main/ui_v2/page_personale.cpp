@@ -110,6 +110,9 @@ void open_picker() {
     for (size_t i = 0; i <= n; ++i) {
         const int32_t ry = static_cast<int32_t>(i) * (kRowH + 1);
         lv_obj_t* row = w::box(card, 0, ry, cw, kRowH, kCard);
+        if (i == 0 || i == n) lv_obj_set_style_radius(row, kRadius, 0);  // segue gli angoli della scheda
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_color(row, c(kCardPress), LV_STATE_PRESSED);
         lv_obj_remove_flag(row, LV_OBJ_FLAG_GESTURE_BUBBLE);
@@ -258,6 +261,7 @@ void build(lv_obj_t* parent, int32_t W, int32_t H, int32_t y0) {
     g_y0 = y0;
     g_layout = custom::load();
     g_grid = w::box(parent, 0, 0, W, H, kBg);
+    lv_obj_set_style_bg_opa(g_grid, LV_OPA_TRANSP, 0);
     rebuild();
 }
 

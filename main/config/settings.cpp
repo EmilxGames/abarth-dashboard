@@ -24,6 +24,7 @@ constexpr const char* kKeyUiStyle     = "ui_style";
 constexpr const char* kKeyUiV2Pending  = "ui_v2_pend";
 constexpr const char* kKeyUiAccent     = "ui_accent";
 constexpr const char* kKeyRedline      = "redline";
+constexpr const char* kKeyBootFail     = "boot_fail";
 constexpr const char* kKeyBgTexture   = "bgtexture";
 constexpr const char* kKeyScreenOrient = "scrno";
 constexpr const char* kKeyDarkTheme   = "darkthm";
@@ -254,6 +255,9 @@ void setRedlineRpm(uint16_t rpm) {
     g_settings.redline_rpm = rpm;
     save_u32(kKeyRedline, rpm);
 }
+
+uint8_t bootFailCount() { return load_u8(kKeyBootFail, 0); }
+void setBootFailCount(uint8_t n) { save_u8(kKeyBootFail, n); }
 
 bool isUiV2Pending() {
     return load_u8(kKeyUiV2Pending, 0) != 0;
