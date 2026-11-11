@@ -12,6 +12,8 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_rom_sys.h>
+#include <esp_cache.h>
+#include <driver/ppa.h>
 #include <cstring>
 #include <algorithm>
 #include "config/settings.h"
@@ -33,12 +35,26 @@ static lv_display_t *g_disp = nullptr;
 static lv_indev_t *g_indev = nullptr;
 static volatile uint32_t g_frame_count = 0;
 
+// Pannello fisico (landscape nativo)
+static constexpr int kPhysW = 1024;
+static constexpr int kPhysH = 600;
+static constexpr size_t kCacheLine = 64;  // CONFIG_CACHE_L1/L2_CACHE_LINE_SIZE
+
+// Rotazione hardware con PPA (Scale-Rotate-Mirror): LVGL -> framebuffer DPI
+static ppa_client_handle_t s_ppa = nullptr;
+static SemaphoreHandle_t s_ppa_done = nullptr;
+static uint16_t *s_fb = nullptr;
+static size_t s_fb_size = 0;
+static bool s_use_ppa = false;
+static ppa_srm_rotation_angle_t s_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
+
 // Fast L1 SRAM scratchpad for tiled rotation (4 KB total, static in internal DRAM BSS)
 alignas(16) static uint16_t s_tile_in[32][32];
 alignas(16) static uint16_t s_tile_out[32][32];
 
-// Cache-blocked 32x32 rotation algorithm with contiguous burst PSRAM I/O
-IRAM_ATTR static void rotate_slice_16bpp(
+// Rotazione software (fallback se la PPA non e' disponibile).
+// Cache-blocked 32x32 con letture/scritture PSRAM sequenziali.
+static void rotate_slice_16bpp(
     const uint16_t *src, uint16_t *dst,
     int w, int h, uint16_t rotate
 )
@@ -99,17 +115,147 @@ IRAM_ATTR static void rotate_slice_16bpp(
     }
 }
 
+// Fallback senza PPA: un solo tentativo con attesa bloccante sul semaforo del
+// driver (niente busy-wait con esp_rom_delay_us).
 static void safe_draw_bitmap(LCD *lcd, int x, int y, int w, int h, const uint8_t *data)
 {
-    int retries = 0;
-    while (retries < 10) {
-        // timeout_ms = 50 sincronizza con il semaforo DMA interno del driver LCD MIPI-DSI
-        if (lcd->drawBitmap(x, y, w, h, data, 50)) {
-            break;
-        }
-        retries++;
-        esp_rom_delay_us(500);
+    if (!lcd->drawBitmap(x, y, w, h, data, 100)) {
+        ESP_LOGW(TAG, "drawBitmap fallito (%d,%d %dx%d)", x, y, w, h);
     }
+}
+
+// ISR PPA: transazione finita -> sblocca flush_wait_cb
+static bool IRAM_ATTR ppa_trans_done_cb(ppa_client_handle_t, ppa_event_data_t *, void *)
+{
+    BaseType_t hp = pdFALSE;
+    xSemaphoreGiveFromISR(s_ppa_done, &hp);
+    return hp == pdTRUE;
+}
+
+// Chiamata da LVGL quando deve riusare un buffer ancora in flush
+static void flush_wait_cb(lv_display_t *disp)
+{
+    if (xSemaphoreTake(s_ppa_done, pdMS_TO_TICKS(200)) != pdTRUE) {
+        ESP_LOGW(TAG, "timeout attesa PPA");
+    }
+}
+
+// Coordinate fisiche del blocco ruotato (stessa convenzione della rotazione CPU)
+static void logical_to_phys(int x1, int y1, int x2, int y2, int &px, int &py, int &pw, int &ph)
+{
+    const int w = x2 - x1 + 1;
+    const int h = y2 - y1 + 1;
+    if (g_rotation_degree == 90) {
+        px = kPhysW - 1 - y2; py = x1; pw = h; ph = w;
+    } else if (g_rotation_degree == 270) {
+        px = y1; py = kPhysH - 1 - x2; pw = h; ph = w;
+    } else {
+        px = x1; py = y1; pw = w; ph = h;
+    }
+}
+
+static esp_err_t ppa_blit(const uint16_t *src, int w, int h, void *dst, size_t dst_size,
+                          int dst_w, int dst_h, int off_x, int off_y,
+                          ppa_srm_rotation_angle_t angle, ppa_trans_mode_t mode)
+{
+    ppa_srm_oper_config_t op = {};
+    op.in.buffer = src;
+    op.in.pic_w = w;
+    op.in.pic_h = h;
+    op.in.block_w = w;
+    op.in.block_h = h;
+    op.in.block_offset_x = 0;
+    op.in.block_offset_y = 0;
+    op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+    op.out.buffer = dst;
+    op.out.buffer_size = dst_size;
+    op.out.pic_w = dst_w;
+    op.out.pic_h = dst_h;
+    op.out.block_offset_x = off_x;
+    op.out.block_offset_y = off_y;
+    op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+    op.rotation_angle = angle;
+    op.scale_x = 1.0f;
+    op.scale_y = 1.0f;
+    op.mirror_x = false;
+    op.mirror_y = false;
+    op.rgb_swap = false;
+    op.byte_swap = false;
+    op.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+    op.mode = mode;
+    op.user_data = nullptr;
+    return ppa_do_scale_rotate_mirror(s_ppa, &op);
+}
+
+// Verifica all'avvio che la PPA ruoti come la funzione software: confronta un
+// piccolo pattern. Se l'angolo atteso non coincide prova quello opposto.
+static bool ppa_self_test(void)
+{
+    if (g_rotation_degree == 0) {
+        s_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
+        return true;
+    }
+    constexpr int TW = 40, TH = 24;
+    const size_t out_bytes = (TW * TH * sizeof(uint16_t) + kCacheLine - 1) & ~(kCacheLine - 1);
+    uint16_t *in = (uint16_t *)heap_caps_aligned_alloc(kCacheLine, TW * TH * 2, MALLOC_CAP_SPIRAM);
+    uint16_t *ref = (uint16_t *)heap_caps_malloc(TW * TH * 2, MALLOC_CAP_SPIRAM);
+    uint16_t *out = (uint16_t *)heap_caps_aligned_alloc(kCacheLine, out_bytes, MALLOC_CAP_SPIRAM);
+    bool ok = false;
+    if (in && ref && out) {
+        for (int i = 0; i < TW * TH; i++) in[i] = (uint16_t)(i * 2654435761u >> 16);
+        rotate_slice_16bpp(in, ref, TW, TH, g_rotation_degree);
+        const ppa_srm_rotation_angle_t first = (g_rotation_degree == 90) ? PPA_SRM_ROTATION_ANGLE_270
+                                                                         : PPA_SRM_ROTATION_ANGLE_90;
+        const ppa_srm_rotation_angle_t second = (first == PPA_SRM_ROTATION_ANGLE_270) ? PPA_SRM_ROTATION_ANGLE_90
+                                                                                       : PPA_SRM_ROTATION_ANGLE_270;
+        for (ppa_srm_rotation_angle_t a : {first, second}) {
+            memset(out, 0, out_bytes);
+            esp_cache_msync(out, out_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+            if (ppa_blit(in, TW, TH, out, out_bytes, TH, TW, 0, 0, a, PPA_TRANS_MODE_BLOCKING) != ESP_OK) break;
+            if (memcmp(out, ref, TW * TH * 2) == 0) {
+                s_ppa_angle = a;
+                ok = true;
+                if (a != first) ESP_LOGW(TAG, "PPA: verso di rotazione invertito rispetto all'atteso, corretto");
+                break;
+            }
+        }
+    }
+    heap_caps_free(in);
+    heap_caps_free(ref);
+    heap_caps_free(out);
+    return ok;
+}
+
+static void ppa_init(LCD *lcd)
+{
+    s_use_ppa = false;
+    s_fb = (uint16_t *)lcd->getFrameBufferByIndex(0);
+    s_fb_size = (size_t)kPhysW * kPhysH * sizeof(uint16_t);
+    if (!s_fb || ((uintptr_t)s_fb & (kCacheLine - 1)) || (s_fb_size & (kCacheLine - 1))) {
+        ESP_LOGW(TAG, "PPA: framebuffer non disponibile o non allineato, uso la rotazione software");
+        return;
+    }
+    s_ppa_done = xSemaphoreCreateBinary();
+    ppa_client_config_t cfg = {};
+    cfg.oper_type = PPA_OPERATION_SRM;
+    cfg.max_pending_trans_num = 1;
+    if (!s_ppa_done || ppa_register_client(&cfg, &s_ppa) != ESP_OK) {
+        ESP_LOGW(TAG, "PPA: registrazione client fallita, uso la rotazione software");
+        return;
+    }
+    if (!ppa_self_test()) {
+        ESP_LOGE(TAG, "PPA: self-test rotazione fallito, uso la rotazione software");
+        ppa_unregister_client(s_ppa);
+        s_ppa = nullptr;
+        return;
+    }
+    ppa_event_callbacks_t cbs = {};
+    cbs.on_trans_done = ppa_trans_done_cb;
+    ppa_client_register_event_callbacks(s_ppa, &cbs);
+    // La CPU non scrive piu' nel framebuffer: pulisci eventuali linee sporche
+    esp_cache_msync(s_fb, s_fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    s_use_ppa = true;
+    ESP_LOGI(TAG, "PPA attiva: rotazione %u gradi in hardware, flush asincrono", g_rotation_degree);
 }
 
 static void flush_callback(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
@@ -122,56 +268,36 @@ static void flush_callback(lv_display_t *disp, const lv_area_t *area, uint8_t *p
     const int w = x2 - x1 + 1;
     const int h = y2 - y1 + 1;
 
-    if (g_rotation_degree != 0) {
+    if (lv_display_flush_is_last(disp)) g_frame_count++;
+
+    int phys_x, phys_y, phys_w, phys_h;
+    logical_to_phys(x1, y1, x2, y2, phys_x, phys_y, phys_w, phys_h);
+    const bool in_bounds = phys_x >= 0 && phys_y >= 0 && phys_w > 0 && phys_h > 0 &&
+                           phys_x + phys_w <= kPhysW && phys_y + phys_h <= kPhysH;
+
+    if (s_use_ppa && in_bounds) {
+        // Asincrono: LVGL continua a disegnare nell'altro buffer; flush_wait_cb
+        // aspetta la fine della PPA prima di riusare questo.
+        if (ppa_blit((const uint16_t *)px_map, w, h, s_fb, s_fb_size, kPhysW, kPhysH,
+                     phys_x, phys_y, s_ppa_angle, PPA_TRANS_MODE_NON_BLOCKING) == ESP_OK) {
+            return;  // lv_display_flush_ready implicito in flush_wait_cb
+        }
+        ESP_LOGW(TAG, "PPA fallita, fallback software per questo flush");
+    }
+
+    if (g_rotation_degree != 0 && in_bounds) {
         if (!g_slice_buf) {
-            g_slice_buf = (uint16_t *)heap_caps_malloc(1024 * 600 * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (g_slice_buf) {
-                memset(g_slice_buf, 0x00, 1024 * 600 * sizeof(uint16_t));
-            }
+            g_slice_buf = (uint16_t *)heap_caps_aligned_alloc(kCacheLine, (size_t)kPhysW * kPhysH * sizeof(uint16_t),
+                                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         }
-
         if (g_slice_buf) {
-            int64_t t0 = esp_timer_get_time();
             rotate_slice_16bpp((const uint16_t *)px_map, g_slice_buf, w, h, g_rotation_degree);
-            int64_t t_rot = esp_timer_get_time() - t0;
-
-            int phys_x, phys_y, phys_w, phys_h;
-            if (g_rotation_degree == 90) {
-                phys_x = 1024 - 1 - y2;
-                phys_y = x1;
-                phys_w = h;
-                phys_h = w;
-            } else { // 270
-                phys_x = y1;
-                phys_y = 600 - 1 - x2;
-                phys_w = h;
-                phys_h = w;
-            }
-
-            if (phys_x < 0) phys_x = 0;
-            if (phys_y < 0) phys_y = 0;
-            if (phys_x + phys_w > 1024) phys_w = 1024 - phys_x;
-            if (phys_y + phys_h > 600) phys_h = 600 - phys_y;
-
-            if (phys_w > 0 && phys_h > 0) {
-                int64_t t1 = esp_timer_get_time();
-                safe_draw_bitmap(lcd, phys_x, phys_y, phys_w, phys_h, (const uint8_t *)g_slice_buf);
-                int64_t t_draw = esp_timer_get_time() - t1;
-
-                static int s_flush_count = 0;
-                if ((++s_flush_count % 30) == 0) {
-                    ESP_LOGI("FLUSH_PERF", "(%dx%d) rot=%.2f ms, draw=%.2f ms",
-                             w, h, (float)t_rot / 1000.0f, (float)t_draw / 1000.0f);
-                }
-            }
-        } else {
-            safe_draw_bitmap(lcd, x1, y1, w, h, px_map);
+            safe_draw_bitmap(lcd, phys_x, phys_y, phys_w, phys_h, (const uint8_t *)g_slice_buf);
         }
-    } else {
+    } else if (g_rotation_degree == 0) {
         safe_draw_bitmap(lcd, x1, y1, w, h, px_map);
     }
 
-    if (lv_display_flush_is_last(disp)) g_frame_count++;
     lv_display_flush_ready(disp);
 }
 
@@ -244,7 +370,8 @@ static lv_display_t *display_init(LCD *lcd)
     uint32_t buffer_bytes = buffer_pixels * sizeof(uint16_t);
 
     for (int i = 0; i < LVGL_PORT_BUFFER_NUM; i++) {
-        lvgl_buf[i] = heap_caps_malloc(buffer_bytes, LVGL_PORT_BUFFER_MALLOC_CAPS);
+        // Allineati alla linea di cache (64 B) per DMA/PPA
+        lvgl_buf[i] = heap_caps_aligned_alloc(kCacheLine, buffer_bytes, LVGL_PORT_BUFFER_MALLOC_CAPS);
         if (!lvgl_buf[i]) {
             ESP_LOGE(TAG, "Allocazione buffer LVGL %d fallita (%u bytes)", i, (unsigned)buffer_bytes);
             return nullptr;
@@ -254,6 +381,11 @@ static lv_display_t *display_init(LCD *lcd)
 
     lv_display_set_buffers(disp, lvgl_buf[0], lvgl_buf[1], buffer_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(disp, flush_callback);
+
+    ppa_init(lcd);
+    if (s_use_ppa) {
+        lv_display_set_flush_wait_cb(disp, flush_wait_cb);
+    }
 
     lv_timer_t *refr_timer = lv_display_get_refr_timer(disp);
     if (refr_timer) {
