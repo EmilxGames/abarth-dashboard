@@ -27,15 +27,27 @@ constexpr uint8_t kObdCanPids[] = {
 };
 constexpr size_t kObdCanPidsCount = sizeof(kObdCanPids) / sizeof(kObdCanPids[0]);
 
-static twai_timing_config_t getTimingConfig(uint32_t baud) {
+// Politica di trasmissione sul C-CAN (vedi revisione C2/C3/M1)
+constexpr int64_t  kSilenceStopTxUs     = 3000000;  ///< 3 s senza frame ricevuti: stop TX
+constexpr int64_t  kObdReplyTimeoutUs   = 50000;    ///< attesa risposta 0x7E8 (P2 ~50 ms)
+constexpr int64_t  kObdMinIntervalUs    = 50000;    ///< max 20 richieste/s complessive
+constexpr int64_t  kRpmStaleUs          = 500000;   ///< RPM a 0 se non aggiornato da 500 ms
+constexpr uint32_t kMinFramesBeforeTx   = 20;       ///< frame validi in ascolto prima di trasmettere
+constexpr int      kMaxBusOffBeforeListenOnly = 3;
+constexpr int64_t  kBusOffBackoffUs[]   = {1000000, 2000000, 5000000, 30000000};
+constexpr uint32_t kObdRequestId        = 0x7E0;    ///< richiesta fisica alla centralina motore
+constexpr uint32_t kObdResponseId       = 0x7E8;
+
+/// Ritorna false per un baud non supportato: niente fallback silenzioso a 500k.
+bool getTimingConfig(uint32_t baud, twai_timing_config_t& out) {
     switch (baud) {
-        case 50000:   return TWAI_TIMING_CONFIG_50KBITS();
-        case 100000:  return TWAI_TIMING_CONFIG_100KBITS();
-        case 125000:  return TWAI_TIMING_CONFIG_125KBITS();
-        case 250000:  return TWAI_TIMING_CONFIG_250KBITS();
-        case 1000000: return TWAI_TIMING_CONFIG_1MBITS();
-        case 500000:
-        default:      return TWAI_TIMING_CONFIG_500KBITS();
+        case 50000:   out = TWAI_TIMING_CONFIG_50KBITS();  return true;
+        case 100000:  out = TWAI_TIMING_CONFIG_100KBITS(); return true;
+        case 125000:  out = TWAI_TIMING_CONFIG_125KBITS(); return true;
+        case 250000:  out = TWAI_TIMING_CONFIG_250KBITS(); return true;
+        case 500000:  out = TWAI_TIMING_CONFIG_500KBITS(); return true;
+        case 1000000: out = TWAI_TIMING_CONFIG_1MBITS();   return true;
+        default:      return false;
     }
 }
 
@@ -216,7 +228,7 @@ bool CanManager::transmit(uint8_t bus_idx, uint32_t id, bool extd, const uint8_t
         memcpy(tx_msg.data, data, tx_msg.data_length_code);
     }
 
-    esp_err_t err = twai_transmit_v2(twai_handles_[bus_idx], &tx_msg, pdMS_TO_TICKS(15));
+    esp_err_t err = twai_transmit_v2(twai_handles_[bus_idx], &tx_msg, 0);  // mai bloccante
     if (err == ESP_OK) {
         bus_[bus_idx].tx_count.fetch_add(1, std::memory_order_relaxed);
         return true;
@@ -225,17 +237,17 @@ bool CanManager::transmit(uint8_t bus_idx, uint32_t id, bool extd, const uint8_t
     return false;
 }
 
-void CanManager::sendNextObdQuery() {
-    const auto& s = settings::current();
-    if (s.can_listen_only) return; // In modalita' solo ascolto non trasmettiamo
-
+bool CanManager::sendNextObdQuery() {
     const uint8_t pid = kObdCanPids[current_pid_index_];
     current_pid_index_ = (current_pid_index_ + 1) % kObdCanPidsCount;
 
-    // Standard 11-bit OBD-II Functional Query su C-CAN (bus 0): ID 0x7DF
-    // Payload: [02] [01] [PID] [55 55 55 55 55]
+    // Richiesta FISICA alla sola centralina motore (0x7E0 -> risposta 0x7E8),
+    // non funzionale a 0x7DF: non disturba le altre centraline.
+    // Payload: [02] [01] [PID] [padding 0x55]
     uint8_t q_data[8] = { 0x02, 0x01, pid, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    transmit(0, 0x7DF, false, q_data, 8);
+    if (!transmit(0, kObdRequestId, false, q_data, 8)) return false;
+    obd_awaiting_pid_ = pid;
+    return true;
 }
 
 void CanManager::handleReceivedMessageCan1(const twai_message_t& msg) {
@@ -249,9 +261,16 @@ void CanManager::handleReceivedMessageCan1(const twai_message_t& msg) {
     /* -------------------------------------------------------------------------
      * 1. Decodifica Standard OBD-over-CAN (ISO 15765-4 su ID 0x7E8 / 0x7E9)
      * ------------------------------------------------------------------------- */
-    if (id == 0x7E8 || id == 0x7E9) {
+    const bool extd = msg.extd != 0;
+
+    if (id == kObdResponseId && !extd) {
+        // Risposta negativa 03 7F 01 NRC: il PID non e' supportato, libera la richiesta
+        if (dlc >= 3 && d[1] == 0x7F && d[2] == 0x01) {
+            obd_awaiting_pid_ = -1;
+        }
         if (dlc >= 3 && d[1] == 0x41) { // Service 01 Response
             const uint8_t pid = d[2];
+            if (pid == obd_awaiting_pid_) obd_awaiting_pid_ = -1;
             const uint8_t* val = &d[3];
             const size_t vlen = (dlc >= 3) ? (dlc - 3) : 0;
 
@@ -260,6 +279,7 @@ void CanManager::handleReceivedMessageCan1(const twai_message_t& msg) {
                     if (vlen >= 2) {
                         float rpm = ((val[0] * 256) + val[1]) / 4.0f;
                         store.set(data::Metric::Rpm, rpm);
+                        last_rpm_us_ = esp_timer_get_time();
                     }
                     break;
                 case 0x0D: // Velocita' (km/h)
@@ -330,11 +350,15 @@ void CanManager::handleReceivedMessageCan1(const twai_message_t& msg) {
      * 2. Sniffing Passivo Frames Nativi Abarth / FCA Powertrain C-CAN (500 kbps)
      * ------------------------------------------------------------------------- */
     // Frame RPM & Acceleratore (standard 11-bit 0x0A0 o extended 0x0618A001)
-    if (id == 0x0A0 || id == 0x0618A001) {
+    // Il flag extd distingue un ID standard da uno esteso con lo stesso numero.
+    if ((id == 0x0A0 && !extd) || (id == 0x0618A001 && extd)) {
         if (dlc >= 4) {
             float rpm = static_cast<float>((d[2] << 8) | d[3]) / 4.0f;
-            if (rpm >= 300.0f && rpm <= 9000.0f) {
+            // 0 = motore spento (va mostrato); 1..299 scartati come rumore
+            if (rpm < 1.0f) rpm = 0.0f;
+            if (rpm == 0.0f || (rpm >= 300.0f && rpm <= 9000.0f)) {
                 store.set(data::Metric::Rpm, rpm);
+                last_rpm_us_ = esp_timer_get_time();
             }
         }
         if (dlc >= 5) {
@@ -343,7 +367,7 @@ void CanManager::handleReceivedMessageCan1(const twai_message_t& msg) {
         }
     }
     // Frame Velocita' Veicolo (standard 11-bit 0x284 o extended 0x0218A006)
-    else if (id == 0x284 || id == 0x0218A006) {
+    else if ((id == 0x284 && !extd) || (id == 0x0218A006 && extd)) {
         if (dlc >= 2) {
             float spd = static_cast<float>((d[0] << 8) | d[1]) * 0.01f;
             if (spd >= 0.0f && spd <= 320.0f) {
@@ -352,7 +376,7 @@ void CanManager::handleReceivedMessageCan1(const twai_message_t& msg) {
         }
     }
     // Frame Temperatura Liquido Raffreddamento (0x288 o 0x0218A008)
-    else if (id == 0x288 || id == 0x0218A008) {
+    else if ((id == 0x288 && !extd) || (id == 0x0218A008 && extd)) {
         if (dlc >= 1) {
             float temp = static_cast<float>(d[0]) - 40.0f;
             if (temp >= -30.0f && temp <= 150.0f) {
@@ -361,7 +385,7 @@ void CanManager::handleReceivedMessageCan1(const twai_message_t& msg) {
         }
     }
     // Frame Turbo Boost / Pressione Collettore (0x584 o 0x484)
-    else if (id == 0x584 || id == 0x484) {
+    else if ((id == 0x584 || id == 0x484) && !extd) {
         if (dlc >= 3) {
             float kpa = static_cast<float>((d[1] << 8) | d[2]) * 0.1f;
             if (kpa >= 20.0f && kpa <= 400.0f) {
@@ -381,6 +405,7 @@ void CanManager::handleReceivedMessageCan2(const twai_message_t& msg) {
     const uint32_t id = msg.identifier;
     const uint8_t* d  = msg.data;
     const uint8_t  dlc = msg.data_length_code;
+    if (msg.extd) return;  // gli ID B-CAN gestiti sono tutti standard a 11 bit
 
     /* -------------------------------------------------------------------------
      * Sniffing Passivo Frames Nativi B-CAN Carrozzeria Abarth / Fiat 500 (50 kbps)
@@ -422,40 +447,63 @@ void CanManager::taskTrampolineCan2(void* arg) {
     static_cast<CanManager*>(arg)->runCan2();
 }
 
-void CanManager::runCan1() {
-    ESP_LOGI(TAG, "CAN 1 (C-CAN Powertrain 500k) task avviato");
-
-    const auto& s = settings::current();
-    const gpio_num_t tx_pin = static_cast<gpio_num_t>(s.can1_tx_pin);
-    const gpio_num_t rx_pin = static_cast<gpio_num_t>(s.can1_rx_pin);
-    const twai_mode_t mode  = s.can_listen_only ? TWAI_MODE_LISTEN_ONLY : TWAI_MODE_NORMAL;
-
+bool CanManager::installCan1(twai_mode_t mode, gpio_num_t tx_pin, gpio_num_t rx_pin,
+                             const twai_timing_config_t& t_config) {
+    if (twai_handles_[0] != nullptr) {
+        twai_stop_v2(twai_handles_[0]);  // puo' fallire in bus-off: va bene
+        twai_driver_uninstall_v2(twai_handles_[0]);
+        twai_handles_[0] = nullptr;
+    }
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT_V2(0, tx_pin, rx_pin, mode);
     g_config.rx_queue_len = 64;
-    g_config.tx_queue_len = 16;
+    g_config.tx_queue_len = 4;
     g_config.alerts_enabled = TWAI_ALERT_BUS_OFF | TWAI_ALERT_BUS_RECOVERED |
                               TWAI_ALERT_ERR_PASS | TWAI_ALERT_ABOVE_ERR_WARN |
                               TWAI_ALERT_RX_QUEUE_FULL;
-
-    twai_timing_config_t t_config = getTimingConfig(s.can1_baud_rate);
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     esp_err_t err = twai_driver_install_v2(&g_config, &t_config, &f_config, &twai_handles_[0]);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "CAN 1 twai_driver_install_v2 fallito: %s (TX=%d, RX=%d)", esp_err_to_name(err), tx_pin, rx_pin);
         bus_[0].last_error = "driver install fallito (" + std::string(esp_err_to_name(err)) + ")";
-        setBusState(0, CanState::Error);
-        tasks_[0] = nullptr;
-        vTaskDelete(nullptr);
-        return;
+        twai_handles_[0] = nullptr;
+        return false;
     }
-
     err = twai_start_v2(twai_handles_[0]);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "CAN 1 twai_start_v2 fallito: %s", esp_err_to_name(err));
         bus_[0].last_error = "twai start fallito (" + std::string(esp_err_to_name(err)) + ")";
         twai_driver_uninstall_v2(twai_handles_[0]);
         twai_handles_[0] = nullptr;
+        return false;
+    }
+    ESP_LOGI(TAG, "CAN 1 in modalita' %s", mode == TWAI_MODE_NORMAL ? "NORMAL (TX abilitata)" : "LISTEN-ONLY (ascolto passivo)");
+    return true;
+}
+
+void CanManager::runCan1() {
+    ESP_LOGI(TAG, "CAN 1 (C-CAN Powertrain) task avviato");
+
+    const settings::Settings s = settings::current();  // copia locale
+    const gpio_num_t tx_pin = static_cast<gpio_num_t>(s.can1_tx_pin);
+    const gpio_num_t rx_pin = static_cast<gpio_num_t>(s.can1_rx_pin);
+
+    twai_timing_config_t t_config;
+    if (!getTimingConfig(s.can1_baud_rate, t_config)) {
+        ESP_LOGE(TAG, "CAN 1: baud rate non valido (%lu): bus non avviato", static_cast<unsigned long>(s.can1_baud_rate));
+        bus_[0].last_error = "baud rate non valido (" + std::to_string(s.can1_baud_rate) + ")";
+        setBusState(0, CanState::Error);
+        tasks_[0] = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    // Si parte SEMPRE in ascolto passivo: si passa a NORMAL (ACK + query OBD)
+    // solo se l'utente lo ha chiesto e dopo aver ricevuto traffico valido,
+    // cioe' con baud rate e cablaggio verificati.
+    const bool tx_requested = !s.can_listen_only;
+    bool normal_mode = false;
+    if (!installCan1(TWAI_MODE_LISTEN_ONLY, tx_pin, rx_pin, t_config)) {
         setBusState(0, CanState::Error);
         tasks_[0] = nullptr;
         vTaskDelete(nullptr);
@@ -467,53 +515,117 @@ void CanManager::runCan1() {
 
     int64_t last_fps_time_us = esp_timer_get_time();
     uint32_t last_rx_count = 0;
-    last_query_time_us_ = esp_timer_get_time();
-    int64_t last_bus_off_time_us = 0;
-    int64_t last_warn_log_us = 0;
+    int64_t last_rx_us = 0;              // 0 = nessun frame ancora
+    uint32_t frames_since_install = 0;
+    int bus_off_count = 0;
+    bool forced_listen_only = false;
+    bool in_bus_off = false;
+    int64_t recovery_due_us = 0;
+    int64_t last_query_us = 0;
+    int64_t query_sent_us = 0;
+    bool rpm_zeroed = false;
+    obd_awaiting_pid_ = -1;
+    last_rpm_us_ = 0;
+
+    auto switch_mode = [&](bool to_normal) -> bool {
+        if (!installCan1(to_normal ? TWAI_MODE_NORMAL : TWAI_MODE_LISTEN_ONLY, tx_pin, rx_pin, t_config)) {
+            setBusState(0, CanState::Error);
+            return false;
+        }
+        normal_mode = to_normal;
+        in_bus_off = false;
+        recovery_due_us = 0;
+        obd_awaiting_pid_ = -1;
+        setBusState(0, CanState::Running);
+        return true;
+    };
 
     while (!stop_requested_[0]) {
-        // 1. Gestione Alerts e Bus-Off
+        // 1. Alert e bus-off con backoff crescente
         uint32_t alerts = 0;
         if (twai_read_alerts_v2(twai_handles_[0], &alerts, 0) == ESP_OK && alerts != 0) {
             if (alerts & TWAI_ALERT_BUS_OFF) {
-                const int64_t b_now = esp_timer_get_time();
-                last_bus_off_time_us = b_now;
-                if ((b_now - last_warn_log_us) > 3000000) {
-                    last_warn_log_us = b_now;
-                    ESP_LOGW(TAG, "CAN 1 Bus-Off (linea aperta o modulo non connesso). Avvio recupero...");
-                }
-                setBusState(0, CanState::BusOff);
+                in_bus_off = true;
+                ++bus_off_count;
                 bus_[0].err_count.fetch_add(1, std::memory_order_relaxed);
-                twai_initiate_recovery_v2(twai_handles_[0]);
-                setBusState(0, CanState::Recovering);
+                setBusState(0, CanState::BusOff);
+                if (bus_off_count >= kMaxBusOffBeforeListenOnly) {
+                    ESP_LOGE(TAG, "CAN 1: %d bus-off, TX disabilitata: torno in ascolto passivo fino al riavvio", bus_off_count);
+                    bus_[0].last_error = "3 bus-off: ascolto passivo forzato";
+                    forced_listen_only = true;
+                    if (!switch_mode(false)) break;
+                } else {
+                    const int idx = (bus_off_count - 1) < 3 ? (bus_off_count - 1) : 3;
+                    recovery_due_us = esp_timer_get_time() + kBusOffBackoffUs[idx];
+                    ESP_LOGW(TAG, "CAN 1 bus-off #%d: recupero tra %lld ms", bus_off_count,
+                             static_cast<long long>(kBusOffBackoffUs[idx] / 1000));
+                }
             }
             if (alerts & TWAI_ALERT_BUS_RECOVERED) {
-                ESP_LOGI(TAG, "CAN 1 Bus recuperato! Riavvio interfaccia...");
+                ESP_LOGI(TAG, "CAN 1 bus recuperato");
                 twai_start_v2(twai_handles_[0]);
+                in_bus_off = false;
                 setBusState(0, CanState::Running);
             }
             if (alerts & (TWAI_ALERT_ERR_PASS | TWAI_ALERT_ABOVE_ERR_WARN)) {
                 bus_[0].err_count.fetch_add(1, std::memory_order_relaxed);
             }
+            if (alerts & TWAI_ALERT_RX_QUEUE_FULL) {
+                bus_[0].err_count.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        if (in_bus_off && recovery_due_us != 0 && esp_timer_get_time() >= recovery_due_us) {
+            recovery_due_us = 0;
+            twai_initiate_recovery_v2(twai_handles_[0]);
+            setBusState(0, CanState::Recovering);
         }
 
-        // 2. Ricezione frame CAN (non-bloccante con timeout 10ms)
+        // 2. Ricezione (timeout 10 ms)
         twai_message_t rx_msg;
-        esp_err_t rx_err = twai_receive_v2(twai_handles_[0], &rx_msg, pdMS_TO_TICKS(10));
-        if (rx_err == ESP_OK) {
+        if (twai_receive_v2(twai_handles_[0], &rx_msg, pdMS_TO_TICKS(10)) == ESP_OK) {
+            last_rx_us = esp_timer_get_time();
+            ++frames_since_install;
             handleReceivedMessageCan1(rx_msg);
         }
 
-        // 3. Polling attivo OBD-over-CAN (ogni 25ms se non in listen-only e dopo almeno 2.5s dall'ultimo bus-off)
         const int64_t now_us = esp_timer_get_time();
-        if (bus_[0].state.load() == CanState::Running && (now_us - last_bus_off_time_us) >= 2500000) {
-            if ((now_us - last_query_time_us_) >= 25000) { // 25 ms (~40 Hz)
-                last_query_time_us_ = now_us;
-                sendNextObdQuery();
+        const bool bus_active = last_rx_us != 0 && (now_us - last_rx_us) < kSilenceStopTxUs;
+
+        // 3. Politica TX: solo se richiesta, con traffico presente e senza bus-off
+        if (tx_requested && !forced_listen_only && !normal_mode && !in_bus_off &&
+            bus_active && frames_since_install >= kMinFramesBeforeTx) {
+            ESP_LOGI(TAG, "CAN 1: traffico valido ricevuto, abilito le richieste OBD");
+            if (!switch_mode(true)) break;
+        } else if (normal_mode && !bus_active) {
+            ESP_LOGW(TAG, "CAN 1: nessun frame da 3 s (quadro spento?): TX sospesa, ascolto passivo");
+            frames_since_install = 0;
+            if (!switch_mode(false)) break;
+        }
+
+        // 4. Query OBD fisiche, una alla volta, max 20 Hz
+        if (normal_mode && !in_bus_off && bus_[0].state.load() == CanState::Running) {
+            if (obd_awaiting_pid_ >= 0 && (now_us - query_sent_us) >= kObdReplyTimeoutUs) {
+                obd_awaiting_pid_ = -1;  // timeout: si passa al PID successivo
+            }
+            if (obd_awaiting_pid_ < 0 && (now_us - last_query_us) >= kObdMinIntervalUs) {
+                last_query_us = now_us;
+                if (sendNextObdQuery()) query_sent_us = now_us;
             }
         }
 
-        // 4. Calcolo Throughput FPS (ogni 1.0 s)
+        // 5. RPM a 0 se non aggiornato da 500 ms
+        if (last_rpm_us_ != 0) {
+            if ((now_us - last_rpm_us_) > kRpmStaleUs) {
+                if (!rpm_zeroed) {
+                    data::store().set(data::Metric::Rpm, 0.0f);
+                    rpm_zeroed = true;
+                }
+            } else {
+                rpm_zeroed = false;
+            }
+        }
+
+        // 6. Throughput FPS (ogni 1.0 s)
         if ((now_us - last_fps_time_us) >= 1000000) {
             const uint32_t current_rx = bus_[0].rx_count.load(std::memory_order_relaxed);
             const float fps = static_cast<float>(current_rx - last_rx_count) * 1000000.0f / static_cast<float>(now_us - last_fps_time_us);
@@ -523,10 +635,12 @@ void CanManager::runCan1() {
         }
     }
 
-    twai_stop_v2(twai_handles_[0]);
-    twai_driver_uninstall_v2(twai_handles_[0]);
-    twai_handles_[0] = nullptr;
-    setBusState(0, CanState::Stopped);
+    if (twai_handles_[0] != nullptr) {
+        twai_stop_v2(twai_handles_[0]);
+        twai_driver_uninstall_v2(twai_handles_[0]);
+        twai_handles_[0] = nullptr;
+    }
+    setBusState(0, stop_requested_[0] ? CanState::Stopped : CanState::Error);
     tasks_[0] = nullptr;
     vTaskDelete(nullptr);
 }
@@ -534,7 +648,7 @@ void CanManager::runCan1() {
 void CanManager::runCan2() {
     ESP_LOGI(TAG, "CAN 2 (B-CAN Body 50k) task avviato");
 
-    const auto& s = settings::current();
+    const settings::Settings s = settings::current();  // copia locale
     const gpio_num_t tx_pin = static_cast<gpio_num_t>(s.can2_tx_pin);
     const gpio_num_t rx_pin = static_cast<gpio_num_t>(s.can2_rx_pin);
     // B-CAN normalmente lavora in sola ricezione passiva per non interferire con i nodi comfort
@@ -547,7 +661,15 @@ void CanManager::runCan2() {
                               TWAI_ALERT_ERR_PASS | TWAI_ALERT_ABOVE_ERR_WARN |
                               TWAI_ALERT_RX_QUEUE_FULL;
 
-    twai_timing_config_t t_config = getTimingConfig(s.can2_baud_rate);
+    twai_timing_config_t t_config;
+    if (!getTimingConfig(s.can2_baud_rate, t_config)) {
+        ESP_LOGE(TAG, "CAN 2: baud rate non valido (%lu): bus non avviato", static_cast<unsigned long>(s.can2_baud_rate));
+        bus_[1].last_error = "baud rate non valido (" + std::to_string(s.can2_baud_rate) + ")";
+        setBusState(1, CanState::Error);
+        tasks_[1] = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     esp_err_t err = twai_driver_install_v2(&g_config, &t_config, &f_config, &twai_handles_[1]);

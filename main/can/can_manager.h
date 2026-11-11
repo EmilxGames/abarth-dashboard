@@ -6,7 +6,8 @@
  *
  * Supporta:
  * - CAN 1: C-CAN Powertrain (500 kbps, TWAI0) - Ricezione passiva frames motore Abarth
- *          + interrogazione attiva ad alta frequenza OBD-over-CAN (ISO 15765-4 su 0x7DF/0x7E8)
+ *          + (solo se abilitato e con traffico presente) richieste OBD fisiche 0x7E0/0x7E8,
+ *          una alla volta, max 20 Hz
  * - CAN 2: B-CAN Body (50 kbps, TWAI1) - Ricezione passiva frames carrozzeria (luci, porte,
  *          odometro, tasti al volante, freno a mano)
  * - Compatibile con moduli WeAct Studio ISOCANFD V1 (isolamento 2.5 kV CA-IS2062A)
@@ -94,7 +95,9 @@ private:
     void setBusState(uint8_t bus_idx, CanState s);
     void handleReceivedMessageCan1(const twai_message_t& msg);
     void handleReceivedMessageCan2(const twai_message_t& msg);
-    void sendNextObdQuery();
+    bool sendNextObdQuery();
+    bool installCan1(twai_mode_t mode, gpio_num_t tx_pin, gpio_num_t rx_pin,
+                     const twai_timing_config_t& t_config);
 
     BusStats      bus_[2];
     twai_handle_t twai_handles_[2] = {nullptr, nullptr};
@@ -103,7 +106,8 @@ private:
 
     // Gestione query OBD-over-CAN (su CAN 1 C-CAN)
     uint8_t current_pid_index_  = 0;
-    int64_t last_query_time_us_ = 0;
+    int16_t obd_awaiting_pid_   = -1;  ///< PID in attesa di risposta (solo task CAN 1)
+    int64_t last_rpm_us_        = 0;   ///< ultimo RPM ricevuto (solo task CAN 1)
 };
 
 CanManager& can();
