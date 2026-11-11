@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 /**
  * @file pids.h
  * @brief Definizione dei PID letti dall'auto e decoder delle risposte.
@@ -70,6 +72,13 @@ inline constexpr size_t kAbarthCustomPidsCount = 4;
 /// @return numero di byte decodificati, 0 su errore.
 size_t parseHexPayload(std::string_view hex, uint8_t* out, size_t out_max,
                        uint8_t expected_sid = 0);
+
+/// Divide la risposta grezza dell'ELM327 (ATH0, ATS0) in messaggi completi.
+/// - una riga esadecimale = un messaggio (anche una per centralina);
+/// - risposte ISO-TP su piu' righe ("00B" + "0:..." "1:..."): le righe "N:"
+///   vengono concatenate e tagliate alla lunghezza dichiarata;
+/// - righe non esadecimali (SEARCHING..., >, ecc.) vengono ignorate.
+std::vector<std::vector<uint8_t>> splitElmMessages(std::string_view raw);
 
 /// Estrae la porzione dati dalla risposta, verificando che mode e pid_id
 /// siano quelli attesi. Popola `data` (subset di `raw`) e ritorna true.

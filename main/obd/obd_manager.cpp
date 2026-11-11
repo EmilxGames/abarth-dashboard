@@ -361,7 +361,7 @@ bool ObdManager::pollOnce() {
         // Esempio: "010C0D04110B". Salta i PID gia' marcati non supportati.
         std::string query = "01";
         size_t included = 0;
-        for (size_t i = 0; i < kStandardPidsCount; ++i) {
+        for (size_t i = 0; i < kStandardPidsCount && included < 6; ++i) {  // max 6 PID per richiesta (ISO 15765-4)
             const auto& sp = kStandardPids[i];
             if (!sp.is_priority) continue;
             if (sp.response_mode != 0x41) continue;  // solo Mode 01
@@ -382,33 +382,29 @@ bool ObdManager::pollOnce() {
             return resp.no_data ? true : true;  // non disconnettere per questo
         }
 
-        // Splitta la risposta per righe (separatore \r o \n) e dispatcha.
-        // Ogni riga e' una risposta PID tipo "410C1AF4".
-        std::string& raw = resp.raw;
-        size_t pos = 0;
-        size_t line_start = 0;
-        uint8_t buf[64];
-        for (pos = 0; pos <= raw.size(); ++pos) {
-            if (pos == raw.size() || raw[pos] == '\r' || raw[pos] == '\n') {
-                size_t line_len = pos - line_start;
-                if (line_len > 0) {
-                    std::string_view line(raw.data() + line_start, line_len);
-                    size_t n = parseHexPayload(line, buf, sizeof(buf), 0x41);
-                    if (n >= 2) {
-                        const PidSpec* spec = findPidSpecByResponse(buf, n, kStandardPids, kStandardPidsCount);
-                        if (spec) {
-                            const uint8_t* d = nullptr;
-                            if (extractPidData(buf, n, *spec, d)) {
-                                float val = 0.0f;
-                                if (spec->decode && spec->decode(d, spec->data_bytes, val)) {
-                                    data::store().set(spec->metric, val);
-                                    success_count_.fetch_add(1);
-                                }
-                            }
-                        }
+        // Riassembla la risposta (anche ISO-TP su piu' righe "0:" "1:") e
+        // scorre ogni messaggio come sequenza 41 PID dati PID dati ...
+        // usando la lunghezza nota di ogni PID (revisione A2).
+        for (const auto& msg : splitElmMessages(resp.raw)) {
+            if (msg.size() < 2 || msg[0] != 0x41) continue;
+            size_t i = 1;
+            while (i < msg.size()) {
+                const uint8_t pid = msg[i];
+                const PidSpec* spec = nullptr;
+                for (size_t k = 0; k < kStandardPidsCount; ++k) {
+                    const auto& sp = kStandardPids[k];
+                    if (sp.response_mode == 0x41 && sp.pid_bytes == 1 && (sp.pid_id & 0xFF) == pid) {
+                        spec = &sp;
+                        break;
                     }
                 }
-                line_start = pos + 1;
+                if (!spec || i + 1 + spec->data_bytes > msg.size()) break;  // PID ignoto: lunghezza sconosciuta
+                float val = 0.0f;
+                if (spec->decode && spec->decode(&msg[i + 1], spec->data_bytes, val)) {
+                    data::store().set(spec->metric, val);
+                    success_count_.fetch_add(1);
+                }
+                i += 1 + spec->data_bytes;
             }
         }
         return true;
@@ -735,46 +731,45 @@ std::string lookupDtcDescription(const std::string& code) {
 }
 
 bool parseDtcResponse(const std::string& raw_resp, std::vector<DtcItem>& out_codes) {
-    uint8_t bytes[128];
-    size_t n = parseHexPayload(raw_resp, bytes, sizeof(bytes));
-    if (n < 1) return false;
-    size_t start_idx = 0;
-    if (bytes[0] == 0x43 || bytes[0] == 0x47) {
-        start_idx = 1;
-        if (n > 1 && bytes[1] <= 16) {
+    // Ogni messaggio (una centralina, anche multi-frame ISO-TP) e' gestito a parte
+    // (revisione M4). Formato: 43/47/4A [conteggio su CAN] poi coppie di byte DTC.
+    bool any = false;
+    for (const auto& msg : splitElmMessages(raw_resp)) {
+        if (msg.empty()) continue;
+        if (msg[0] != 0x43 && msg[0] != 0x47 && msg[0] != 0x4A) continue;
+        any = true;
+        size_t start_idx = 1;
+        // Su CAN il secondo byte e' il numero di DTC: lo riconosciamo se la
+        // lunghezza del messaggio torna esattamente (1 + 1 + 2*N)
+        if (msg.size() >= 2 && msg.size() == 2 + 2u * msg[1]) {
             start_idx = 2;
         }
-    }
+        for (size_t i = start_idx; i + 1 < msg.size(); i += 2) {
+            const uint8_t b1 = msg[i];
+            const uint8_t b2 = msg[i + 1];
+            if (b1 == 0x00 && b2 == 0x00) continue;  // P0000 = riempimento, non e' un guasto
 
-    for (size_t i = start_idx; i + 1 < n; i += 2) {
-        uint8_t b1 = bytes[i];
-        uint8_t b2 = bytes[i+1];
-        if (b1 == 0x00 && b2 == 0x00) continue;
+            char type_char = 'P';
+            const uint8_t type_bits = (b1 & 0xC0) >> 6;
+            if (type_bits == 1) type_char = 'C';
+            else if (type_bits == 2) type_char = 'B';
+            else if (type_bits == 3) type_char = 'U';
 
-        char type_char = 'P';
-        uint8_t type_bits = (b1 & 0xC0) >> 6;
-        if (type_bits == 1) type_char = 'C';
-        else if (type_bits == 2) type_char = 'B';
-        else if (type_bits == 3) type_char = 'U';
+            char code_buf[8];
+            std::snprintf(code_buf, sizeof(code_buf), "%c%X%X%X%X", type_char,
+                          (b1 & 0x30) >> 4, b1 & 0x0F, (b2 & 0xF0) >> 4, b2 & 0x0F);
+            std::string code_str(code_buf);
 
-        uint8_t d1 = (b1 & 0x30) >> 4;
-        uint8_t d2 = b1 & 0x0F;
-        uint8_t d3 = (b2 & 0xF0) >> 4;
-        uint8_t d4 = b2 & 0x0F;
-
-        char code_buf[8];
-        std::snprintf(code_buf, sizeof(code_buf), "%c%X%X%X%X", type_char, d1, d2, d3, d4);
-        std::string code_str(code_buf);
-
-        bool exists = false;
-        for (const auto& existing : out_codes) {
-            if (existing.code == code_str) { exists = true; break; }
-        }
-        if (!exists) {
-            out_codes.push_back({code_str, lookupDtcDescription(code_str)});
+            bool exists = false;
+            for (const auto& existing : out_codes) {
+                if (existing.code == code_str) { exists = true; break; }
+            }
+            if (!exists) {
+                out_codes.push_back({code_str, lookupDtcDescription(code_str)});
+            }
         }
     }
-    return true;
+    return any;
 }
 }  // namespace
 

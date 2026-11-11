@@ -2,6 +2,8 @@
 
 #include <cctype>
 #include <cstring>
+#include <cstdlib>
+#include <string>
 
 namespace abarth::obd {
 
@@ -342,6 +344,94 @@ size_t parseHexPayload(std::string_view hex, uint8_t* out, size_t out_max,
     const size_t copy = std::min(out_max, tmp_len - start);
     std::memcpy(out, tmp + start, copy);
     return copy;
+}
+
+/* === Riassemblaggio risposte ELM327 multi-riga (ISO-TP) ================== */
+
+namespace {
+bool parse_hex_line(std::string_view line, std::vector<uint8_t>& out) {
+    out.clear();
+    int high = -1;
+    for (char c : line) {
+        if (c == ' ' || c == '\t') continue;
+        const int nib = hex_nibble(c);
+        if (nib < 0) return false;
+        if (high < 0) { high = nib; continue; }
+        out.push_back(static_cast<uint8_t>((high << 4) | nib));
+        high = -1;
+    }
+    return high < 0 && !out.empty();
+}
+
+bool is_hex_text(std::string_view t) {
+    if (t.empty()) return false;
+    for (char c : t) if (hex_nibble(c) < 0) return false;
+    return true;
+}
+}  // namespace
+
+std::vector<std::vector<uint8_t>> splitElmMessages(std::string_view raw) {
+    std::vector<std::vector<uint8_t>> msgs;
+    std::vector<uint8_t> multi;       // messaggio ISO-TP in costruzione
+    size_t multi_len = 0;             // lunghezza dichiarata (0 = sconosciuta)
+    bool in_multi = false;
+    int last_index = -1;
+    std::vector<uint8_t> bytes;
+
+    auto flush_multi = [&]() {
+        if (in_multi && !multi.empty()) {
+            if (multi_len > 0 && multi.size() > multi_len) multi.resize(multi_len);
+            msgs.push_back(multi);
+        }
+        multi.clear();
+        multi_len = 0;
+        in_multi = false;
+        last_index = -1;
+    };
+
+    size_t start = 0;
+    for (size_t pos = 0; pos <= raw.size(); ++pos) {
+        if (pos != raw.size() && raw[pos] != '\r' && raw[pos] != '\n') continue;
+        std::string_view line = raw.substr(start, pos - start);
+        start = pos + 1;
+        // togli spazi
+        std::string clean;
+        for (char c : line) if (c != ' ' && c != '\t') clean.push_back(c);
+        if (clean.empty()) continue;
+
+        const size_t colon = clean.find(':');
+        if (colon != std::string::npos && colon >= 1 && colon <= 2 &&
+            is_hex_text(std::string_view(clean).substr(0, colon))) {
+            // Riga di continuazione ISO-TP "N:"
+            const int idx = static_cast<int>(std::strtol(clean.substr(0, colon).c_str(), nullptr, 16));
+            if (!in_multi) {
+                in_multi = true;  // messaggio senza riga di lunghezza
+            } else if (idx == 0) {
+                // "0:" dopo "F:" con lunghezza non ancora raggiunta = indice che riparte;
+                // altrimenti e' un nuovo messaggio (es. seconda centralina)
+                const bool wrap = last_index == 0xF && multi_len > 0 && multi.size() < multi_len;
+                if (!wrap) { flush_multi(); in_multi = true; }
+            }
+            last_index = idx;
+            if (parse_hex_line(std::string_view(clean).substr(colon + 1), bytes)) {
+                multi.insert(multi.end(), bytes.begin(), bytes.end());
+            }
+            continue;
+        }
+        if (!is_hex_text(clean)) continue;  // SEARCHING..., ecc.
+
+        if (clean.size() == 3) {
+            // Riga con la lunghezza (sempre 3 cifre, es. "00B") del messaggio ISO-TP che segue
+            flush_multi();
+            in_multi = true;
+            multi_len = std::strtoul(clean.c_str(), nullptr, 16);
+            continue;
+        }
+        flush_multi();
+        if (parse_hex_line(clean, bytes)) msgs.push_back(bytes);
+    }
+    flush_multi();
+    return msgs;
 }
 
 bool extractPidData(const uint8_t* raw, size_t raw_len, const PidSpec& spec,
