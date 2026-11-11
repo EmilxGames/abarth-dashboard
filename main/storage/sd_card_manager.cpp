@@ -248,7 +248,7 @@ bool SDCardManager::init() {
         // Se non esiste, crea intestazione CSV
         f = fopen(m_active_log_path, "w");
         if (f) {
-            fputs("timestamp_ms,rpm,speed_kmh,boost_bar,coolant_temp_c,oil_temp_virtual_c,iat_c,throttle_pct\n", f);
+            fputs("timestamp_ms,rpm,speed_kmh,boost_bar,coolant_temp_c,oil_temp_virtual_c,iat_c,throttle_pct,age_max_ms\n", f);
             fclose(f);
         }
     } else {
@@ -408,7 +408,7 @@ bool SDCardManager::startNewLogSession() {
 
     FILE* f = fopen(m_active_log_path, "w");
     if (f) {
-        fputs("timestamp_ms,rpm,speed_kmh,boost_bar,coolant_temp_c,oil_temp_virtual_c,iat_c,throttle_pct\n", f);
+        fputs("timestamp_ms,rpm,speed_kmh,boost_bar,coolant_temp_c,oil_temp_virtual_c,iat_c,throttle_pct,age_max_ms\n", f);
         fclose(f);
         ESP_LOGI(TAG, "Nuova sessione di log telemetria avviata: %s", m_active_log_path);
         return true;

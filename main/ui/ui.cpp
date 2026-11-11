@@ -451,7 +451,7 @@ void on_tick(lv_timer_t* /*t*/) {
     }
 
 
-    // Aggiornamento stato MicroSD e logging telemetria (1 Hz)
+    // Aggiornamento stato MicroSD (1 Hz)
     static int64_t s_last_sd_log_ms = 0;
     if (now_ms - s_last_sd_log_ms >= 1000) {
         s_last_sd_log_ms = now_ms;
@@ -463,22 +463,7 @@ void on_tick(lv_timer_t* /*t*/) {
                 lv_label_set_text(g_sd_label, sd_ok ? LV_SYMBOL_SD_CARD : "");
             }
         }
-        // Registra su SD solo durante polling attivo (evita scritture inutili a cruscotto fermo)
-        if (sd_ok && abarth::obd::obd().state() == abarth::obd::ObdState::Polling) {
-            auto& ds = abarth::data::store();
-            char csv_buf[160];
-            float rpm = ds.get(Metric::Rpm).value;
-            float spd = ds.get(Metric::Speed).value;
-            float bst = ds.get(Metric::BoostRelBar).value;
-            float clt = ds.get(Metric::CoolantTempC).value;
-            float oil = abarth::warmup::warmup_mgr().estimatedOilTemp();
-            float iat = ds.get(Metric::IntakeAirTempC).value;
-            float thr = ds.get(Metric::Throttle).value;
-
-            std::snprintf(csv_buf, sizeof(csv_buf), "%lld,%.0f,%.1f,%.2f,%.1f,%.1f,%.1f,%.1f",
-                          static_cast<long long>(now_ms), rpm, spd, bst, clt, oil, iat, thr);
-            abarth::storage::sd().logTelemetry(csv_buf);
-        }
+        // La registrazione telemetria e' nel task storage/telemetry_logger (revisione A7)
     }
 
     // Header e Tab Stato: writeback solo se cambia stringa/valore.

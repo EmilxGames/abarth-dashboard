@@ -32,6 +32,7 @@
 #include "storage/sd_card_manager.h"
 #include "storage/ota_updater.h"
 #include "storage/web_server.h"
+#include "storage/telemetry_logger.h"
 #include <sys/stat.h>
 #include "esp_sntp.h"
 
@@ -2993,7 +2994,9 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                 lv_obj_add_event_cb(btn_remount_nosd, [](lv_event_t*) {
                     const uint32_t gen = g_content_gen;
                     run_in_worker([gen]() {
+                        abarth::storage::telemetry::pause();
                         abarth::storage::sd().remount();
+                        abarth::storage::telemetry::resume();
                         post_to_ui([gen]() { if (gen == g_content_gen) render_category(g_current_cat, 0); });
                     });
                 }, LV_EVENT_CLICKED, nullptr);
@@ -3044,7 +3047,9 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                 lv_obj_set_style_text_font(l_nl, &lv_font_montserrat_14, 0);
                 lv_obj_center(l_nl);
                 lv_obj_add_event_cb(btn_new_log, [](lv_event_t*) {
+                    abarth::storage::telemetry::pause();  // il logger chiude il file
                     abarth::storage::sd().startNewLogSession();
+                    abarth::storage::telemetry::resume();
                     render_category(g_current_cat, 0);
                 }, LV_EVENT_CLICKED, nullptr);
 
@@ -3084,7 +3089,9 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                     lv_label_set_text(lc, "Conferma Eliminazione");
                     lv_obj_center(lc);
                     lv_obj_add_event_cb(b_conf, [](lv_event_t*) {
-                        abarth::storage::sd().clearLogs();
+                        abarth::storage::telemetry::pause();  // il logger chiude il file
+                    abarth::storage::sd().clearLogs();
+                    abarth::storage::telemetry::resume();
                         close_modal(nullptr);
                         render_category(g_current_cat, 0);
                     }, LV_EVENT_CLICKED, nullptr);
@@ -3243,7 +3250,9 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             lv_obj_add_event_cb(btn_remount, [](lv_event_t*) {
                 const uint32_t gen = g_content_gen;
                 run_in_worker([gen]() {
-                    abarth::storage::sd().remount();
+                    abarth::storage::telemetry::pause();
+                        abarth::storage::sd().remount();
+                        abarth::storage::telemetry::resume();
                     post_to_ui([gen]() { if (gen == g_content_gen) render_category(g_current_cat, 0); });
                 });
             }, LV_EVENT_CLICKED, nullptr);

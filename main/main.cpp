@@ -23,6 +23,7 @@
 #include "storage/rtc_manager.h"
 #include "storage/ota_updater.h"
 #include "storage/web_server.h"
+#include "storage/telemetry_logger.h"
 #include "ui/splash.h"
 #include "ui/ui.h"
 
@@ -119,6 +120,7 @@ extern "C" void app_main(void) {
 
     DIAG("step: SD card init (Slot 0)");
     abarth::storage::sd().init();
+    abarth::storage::telemetry::start();
 
     DIAG("step: setBrightness %d",
          static_cast<int>(abarth::settings::current().brightness));
