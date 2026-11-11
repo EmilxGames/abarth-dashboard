@@ -4,6 +4,7 @@
 #include "config/connection.h"
 #include "config/settings.h"
 #include "storage/web_server.h"
+#include "ui_v2/theme.h"
 
 namespace abarth::ui_v2::setup {
 
@@ -12,7 +13,9 @@ using namespace abarth::settings;
 const RowInfo kRows[] = {
     {RowId::Brightness,   "DISPLAY",     "Luminosita'"},
     {RowId::Orientation,  "DISPLAY",     "Orientamento"},
+    {RowId::Accent,       "DISPLAY",     "Colore accento"},
     {RowId::UiStyle,      "DISPLAY",     "Stile interfaccia"},
+    {RowId::Redline,      "DISPLAY",     "Zona rossa giri"},
     {RowId::TempUnit,     "UNITA'",      "Temperatura"},
     {RowId::SpeedUnit,    "UNITA'",      "Velocita'"},
     {RowId::PressureUnit, "UNITA'",      "Pressione"},
@@ -45,6 +48,8 @@ void valueText(RowId id, char* out, int n) {
         case RowId::WebServer:    std::snprintf(out, n, "%s", web::isRunning() ? "Attivo" : "Spento"); break;
         case RowId::DemoMode:     std::snprintf(out, n, "%s", (s.demo_mode && s.debug_mode) ? "Attiva" : "Spenta"); break;
         case RowId::UiStyle:      std::snprintf(out, n, "%s", s.ui_style == UiStyle::Racing ? "Moderno" : "Classica"); break;
+        case RowId::Accent:       std::snprintf(out, n, "%s", ui_v2::theme::kAccentNames[s.ui_accent <= 3 ? s.ui_accent : 0]); break;
+        case RowId::Redline:      std::snprintf(out, n, "%u", s.redline_rpm); break;
         default:                  if (n > 0) out[0] = 0; break;
     }
 }
@@ -91,6 +96,17 @@ const char* activate(RowId id, bool& needs_reboot) {
             setUiStyle(s.ui_style == UiStyle::Racing ? UiStyle::Classic : UiStyle::Racing);
             needs_reboot = true;
             return "Lo stile si applica al riavvio.";
+        case RowId::Accent:
+            setUiAccent(static_cast<uint8_t>((s.ui_accent + 1) % 4));
+            needs_reboot = true;
+            return "Il colore accento si applica al riavvio.";
+        case RowId::Redline: {
+            // 5000 -> 7500 a passi di 250, poi si riparte
+            uint16_t r = s.redline_rpm + 250;
+            if (r > 7500) r = 5000;
+            setRedlineRpm(r);
+            return nullptr;
+        }
         default:
             return nullptr;  // Brightness e Advanced gestiti dalla UI
     }

@@ -20,7 +20,9 @@ enum class RowId : uint8_t {
     AutoConnect,     ///< on/off
     WebServer,       ///< avvia/arresta (richiede WiFi)
     DemoMode,        ///< simulazione on/off
-    UiStyle,         ///< Racing / Classica (riavvio)
+    UiStyle,         ///< Moderno / Classica (riavvio)
+    Accent,          ///< colore accento della UI Moderno
+    Redline,         ///< giri da cui la barra diventa rossa
     Advanced,        ///< apre le Impostazioni complete
     Count
 };
