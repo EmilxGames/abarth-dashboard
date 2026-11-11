@@ -26,6 +26,8 @@
 #include "ui/splash.h"
 #include "ui/ui.h"
 
+#include <esp_ota_ops.h>
+
 static constexpr const char* TAG = "main";
 
 #define DIAG(fmt, ...) do { printf("[I][main] [DIAG] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } while (0)
@@ -180,6 +182,15 @@ extern "C" void app_main(void) {
 #else
     DIAG("step: splash dismiss SKIPPED (ABARTH_DIAG_KEEP_SPLASH)");
 #endif
+
+    // UI costruita e sorgente dati (CAN o OBD) avviata: il firmware e' sano.
+    // Con il rollback attivo, se un aggiornamento OTA non arriva fin qui (crash
+    // o reset prima), al riavvio successivo il bootloader torna alla versione
+    // precedente.
+    {
+        const esp_err_t rb = esp_ota_mark_app_valid_cancel_rollback();
+        DIAG("firmware confermato valido (rollback annullato): %s", esp_err_to_name(rb));
+    }
 
     DIAG("*** app_main completato ***");
     // app_main returns, tasks continue running in background.
