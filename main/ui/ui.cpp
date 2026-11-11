@@ -15,6 +15,7 @@
 #include "data/data_store.h"
 #include "display/lvgl_v8_port.h"
 #include "obd/obd_manager.h"
+#include "can/can_manager.h"
 #include <esp_heap_caps.h>
 #include "storage/sd_card_manager.h"
 #include "ui/settings_tab.h"
@@ -108,6 +109,19 @@ namespace mf {
 struct MinimalDashboard {
     bool active = false;
 
+    // Cockpit Containers & Cards for dynamic visibility reflow
+    lv_obj_t* rev_card         = nullptr;
+    lv_obj_t* mid_row          = nullptr;
+    lv_obj_t* spd_card         = nullptr;
+    lv_obj_t* dyn_card         = nullptr;
+    lv_obj_t* r_ld             = nullptr;
+    lv_obj_t* r_th             = nullptr;
+    lv_obj_t* btm_row          = nullptr;
+    lv_obj_t* p1               = nullptr;
+    lv_obj_t* p2               = nullptr;
+    lv_obj_t* p3               = nullptr;
+    lv_obj_t* p4               = nullptr;
+
     // Cockpit / Motore Tab
     lv_obj_t* rev_bar          = nullptr;
     lv_obj_t* rev_label        = nullptr;
@@ -141,6 +155,7 @@ struct MinimalStrip {
     float       min_val;
     float       max_val;
     lv_color_t  color;
+    lv_obj_t*   row;
     lv_obj_t*   val_label;
     lv_obj_t*   unit_label;
     lv_obj_t*   bar;
@@ -151,6 +166,11 @@ struct MinimalStrip {
 
 std::array<MinimalStrip, 24> g_mf_strips;
 size_t g_mf_strip_count = 0;
+
+std::array<MinimalStrip, 24> g_custom_strips;
+size_t g_custom_strip_count = 0;
+lv_obj_t* g_t_custom = nullptr;
+lv_obj_t* g_tab_btn_custom = nullptr;
 
 void update_minimal_dashboard(int64_t now_ms);
 
@@ -468,10 +488,14 @@ void on_tick(lv_timer_t* /*t*/) {
         static std::string last_dev_str = "";
 
         // 1. Device Info Label
+        const auto& settings = abarth::settings::current();
+        const bool is_can = (settings.connection_mode == abarth::settings::ConnectionMode::DirectCan);
+
         if (g_device_label) {
-            const auto& settings = abarth::settings::current();
             std::string dev_str = "Dispositivo: ";
-            if (!settings.saved_dongle_mac.empty()) {
+            if (is_can) {
+                dev_str += "Dual CAN (WeAct ISOCANFD V1)";
+            } else if (!settings.saved_dongle_mac.empty()) {
                 dev_str += "BLE (" + settings.saved_dongle_mac + ")";
             } else if (!settings.saved_wifi_ssid.empty()) {
                 dev_str += "WiFi (" + settings.saved_wifi_ssid + ")";
@@ -485,15 +509,51 @@ void on_tick(lv_timer_t* /*t*/) {
         }
 
         // 2. State Labels & OBD Connection Badge
-        const bool is_demo = abarth::settings::current().demo_mode;
+        const bool is_demo = settings.demo_mode;
         const abarth::obd::ObdState st = abarth::obd::obd().state();
-        if (st != last_st || is_demo) {
+        const abarth::can::CanState can1_st = abarth::can::can().state(0);
+        const abarth::can::CanState can2_st = abarth::can::can().state(1);
+
+        if (st != last_st || is_demo || is_can) {
             last_st = st;
-            const char* st_name = is_demo ? "[ SIMULAZIONE ]" : abarth::obd::stateName(st);
+            char can_st_buf[64];
+            if (is_can) {
+                const bool c1_ok = (can1_st == abarth::can::CanState::Running);
+                const bool c2_ok = (can2_st == abarth::can::CanState::Running);
+                if (c1_ok && c2_ok) {
+                    snprintf(can_st_buf, sizeof(can_st_buf), "CAN DUAL ATTIVO (OK)");
+                } else if (c1_ok) {
+                    snprintf(can_st_buf, sizeof(can_st_buf), "C-CAN 500K ATTIVO (OK)");
+                } else if (c2_ok) {
+                    snprintf(can_st_buf, sizeof(can_st_buf), "B-CAN 50K ATTIVO (OK)");
+                } else if (can1_st == abarth::can::CanState::Error || can2_st == abarth::can::CanState::Error ||
+                           can1_st == abarth::can::CanState::BusOff || can2_st == abarth::can::CanState::BusOff) {
+                    snprintf(can_st_buf, sizeof(can_st_buf), "CAN BUS-OFF / ERRORE");
+                } else {
+                    snprintf(can_st_buf, sizeof(can_st_buf), "CAN ARRESTATO");
+                }
+            }
+            const char* st_name = is_demo ? "[ SIMULAZIONE ]" : 
+                                  is_can ? can_st_buf : 
+                                  abarth::obd::stateName(st);
             if (g_status_state_label) {
                 lv_label_set_text(g_status_state_label, st_name);
                 lv_color_t color = is_demo ? lv_color_hex(0xFFD700) : lv_color_hex(0x9A9AA6);
-                if (!is_demo) {
+                if (is_can) {
+                    const bool c1_ok = (can1_st == abarth::can::CanState::Running);
+                    const bool c2_ok = (can2_st == abarth::can::CanState::Running);
+                    if (c1_ok || c2_ok) {
+                        color = lv_color_hex(0x30CC60);
+                    } else if (can1_st == abarth::can::CanState::BusOff || can2_st == abarth::can::CanState::BusOff ||
+                               can1_st == abarth::can::CanState::Error || can2_st == abarth::can::CanState::Error) {
+                        color = lv_color_hex(0xFF5252);
+                    } else if (can1_st == abarth::can::CanState::Starting || can2_st == abarth::can::CanState::Starting ||
+                               can1_st == abarth::can::CanState::Recovering || can2_st == abarth::can::CanState::Recovering) {
+                        color = lv_color_hex(0xFFC107);
+                    } else {
+                        color = lv_color_hex(0x9A9AA6);
+                    }
+                } else if (!is_demo) {
                     switch (st) {
                         case abarth::obd::ObdState::Polling:
                             color = lv_color_hex(0x30CC60);
@@ -518,16 +578,23 @@ void on_tick(lv_timer_t* /*t*/) {
         // Connection Badge in Header: animated pulsing/blinking icon + color badge
         if (g_conn_badge) {
             static abarth::obd::ObdState badge_last_st = static_cast<abarth::obd::ObdState>(255);
+            static abarth::can::CanState badge_last_c1_st = static_cast<abarth::can::CanState>(255);
+            static abarth::can::CanState badge_last_c2_st = static_cast<abarth::can::CanState>(255);
             static bool badge_last_demo = false;
+            static bool badge_last_is_can = false;
             static uint8_t last_blink_phase = 255;
 
-            const bool is_searching = (!is_demo) && (st == abarth::obd::ObdState::Scanning ||
-                                                     st == abarth::obd::ObdState::Connecting ||
-                                                     st == abarth::obd::ObdState::Initializing);
+            const bool is_searching = (!is_demo) && (!is_can) && (st == abarth::obd::ObdState::Scanning ||
+                                                                  st == abarth::obd::ObdState::Connecting ||
+                                                                  st == abarth::obd::ObdState::Initializing);
             const uint8_t blink_phase = is_searching ? static_cast<uint8_t>((now_ms / 500) % 2) : 0;
 
-            if (st != badge_last_st || is_demo != badge_last_demo || (is_searching && blink_phase != last_blink_phase)) {
+            if (st != badge_last_st || can1_st != badge_last_c1_st || can2_st != badge_last_c2_st ||
+                is_can != badge_last_is_can || is_demo != badge_last_demo || (is_searching && blink_phase != last_blink_phase)) {
                 badge_last_st = st;
+                badge_last_c1_st = can1_st;
+                badge_last_c2_st = can2_st;
+                badge_last_is_can = is_can;
                 badge_last_demo = is_demo;
                 last_blink_phase = blink_phase;
 
@@ -542,6 +609,51 @@ void on_tick(lv_timer_t* /*t*/) {
                     if (g_conn_label) {
                         lv_label_set_text(g_conn_label, "DEMO");
                         lv_obj_set_style_text_color(g_conn_label, lv_color_hex(0xC084FC), 0);
+                    }
+                } else if (is_can) {
+                    const bool c1_ok = (can1_st == abarth::can::CanState::Running);
+                    const bool c2_ok = (can2_st == abarth::can::CanState::Running);
+                    const bool any_err = (can1_st == abarth::can::CanState::BusOff || can1_st == abarth::can::CanState::Error ||
+                                          can2_st == abarth::can::CanState::BusOff || can2_st == abarth::can::CanState::Error);
+
+                    if (any_err && !c1_ok && !c2_ok) {
+                        lv_obj_set_style_border_color(g_conn_badge, lv_color_hex(0xEF4444), 0);
+                        lv_obj_set_style_bg_color(g_conn_badge, lv_color_hex(0x2A0E10), 0);
+                        lv_obj_set_style_opa(g_conn_badge, LV_OPA_COVER, 0);
+                        if (g_conn_icon) {
+                            lv_label_set_text(g_conn_icon, LV_SYMBOL_WARNING);
+                            lv_obj_set_style_text_color(g_conn_icon, lv_color_hex(0xF87171), 0);
+                        }
+                        if (g_conn_label) {
+                            lv_label_set_text(g_conn_label, "CAN ERR");
+                            lv_obj_set_style_text_color(g_conn_label, lv_color_hex(0xF87171), 0);
+                        }
+                    } else if (c1_ok || c2_ok) {
+                        lv_obj_set_style_border_color(g_conn_badge, lv_color_hex(0x10B981), 0);
+                        lv_obj_set_style_bg_color(g_conn_badge, lv_color_hex(0x042012), 0);
+                        lv_obj_set_style_opa(g_conn_badge, LV_OPA_COVER, 0);
+                        if (g_conn_icon) {
+                            lv_label_set_text(g_conn_icon, LV_SYMBOL_SETTINGS);
+                            lv_obj_set_style_text_color(g_conn_icon, lv_color_hex(0x34D399), 0);
+                        }
+                        if (g_conn_label) {
+                            const char* badge_txt = (c1_ok && c2_ok) ? "CAN DUAL" :
+                                                    c1_ok ? "C-CAN 500K" : "B-CAN 50K";
+                            lv_label_set_text(g_conn_label, badge_txt);
+                            lv_obj_set_style_text_color(g_conn_label, lv_color_hex(0x34D399), 0);
+                        }
+                    } else {
+                        lv_obj_set_style_border_color(g_conn_badge, lv_color_hex(0xF59E0B), 0);
+                        lv_obj_set_style_bg_color(g_conn_badge, lv_color_hex(0x261905), 0);
+                        lv_obj_set_style_opa(g_conn_badge, LV_OPA_COVER, 0);
+                        if (g_conn_icon) {
+                            lv_label_set_text(g_conn_icon, LV_SYMBOL_SETTINGS);
+                            lv_obj_set_style_text_color(g_conn_icon, lv_color_hex(0xFBBF24), 0);
+                        }
+                        if (g_conn_label) {
+                            lv_label_set_text(g_conn_label, "CAN REC");
+                            lv_obj_set_style_text_color(g_conn_label, lv_color_hex(0xFBBF24), 0);
+                        }
                     }
                 } else if (st == abarth::obd::ObdState::Polling) {
                     lv_obj_set_style_border_color(g_conn_badge, lv_color_hex(0x10B981), 0);
@@ -599,8 +711,8 @@ void on_tick(lv_timer_t* /*t*/) {
         }
 
         // 3. Counters & Last Error
-        const uint32_t ok  = abarth::obd::obd().successfulReads();
-        const uint32_t err = abarth::obd::obd().failedReads();
+        const uint32_t ok  = is_can ? abarth::can::can().totalRxFrames() : abarth::obd::obd().successfulReads();
+        const uint32_t err = is_can ? abarth::can::can().totalErrors() : abarth::obd::obd().failedReads();
         if (ok != last_ok || err != last_err) {
             last_ok = ok; last_err = err;
             if (g_ok_counter_label) {
@@ -621,7 +733,16 @@ void on_tick(lv_timer_t* /*t*/) {
                 lv_label_set_text(g_counters_label, tmp);
             }
             if (g_last_err_label) {
-                const std::string& err_str = abarth::obd::obd().lastError();
+                std::string err_str;
+                if (is_can) {
+                    if (!abarth::can::can().lastError(0).empty()) {
+                        err_str = "CAN1: " + abarth::can::can().lastError(0);
+                    } else if (!abarth::can::can().lastError(1).empty()) {
+                        err_str = "CAN2: " + abarth::can::can().lastError(1);
+                    }
+                } else {
+                    err_str = abarth::obd::obd().lastError();
+                }
                 if (!err_str.empty()) {
                     lv_label_set_text(g_last_err_label, err_str.c_str());
                     lv_obj_set_style_text_color(g_last_err_label, lv_color_hex(0xFF5252), 0);
@@ -636,9 +757,9 @@ void on_tick(lv_timer_t* /*t*/) {
 
     settings_tab::tick();
 
-    // === MINIMAL FUNZIONALE: aggiorna cockpit e telemetry strips solo se visibili (tab 0..4) ===
+    // === MINIMAL FUNZIONALE: aggiorna cockpit e telemetry strips solo se visibili (tab 0..5) ===
     const uint32_t active_tab = g_main_tabview ? lv_tabview_get_tab_active(g_main_tabview) : 0;
-    if (active_tab <= 4 && g_mf_dash.active) {
+    if (active_tab <= 5 && g_mf_dash.active) {
         update_minimal_dashboard(now_ms);
     }
 }
@@ -647,14 +768,83 @@ void on_tick(lv_timer_t* /*t*/) {
  *  MINIMAL FUNZIONALE — Dashboard Essenziale ad Alta Leggibilita'
  * ========================================================================== */
 
-void add_minimal_strip(lv_obj_t* parent, Metric m, const char* title,
-                       const char* unit, float min_v, float max_v,
-                       int decimals = 1, ValueKind kind = ValueKind::Generic,
-                       lv_color_t accent_color = lv_color_hex(mf::ACCENT_RED)) {
-    if (g_mf_strip_count >= g_mf_strips.size()) return;
+struct MetricMeta {
+    const char* title;
+    const char* unit;
+    float       min_v;
+    float       max_v;
+    int         decimals;
+    ValueKind   kind;
+    lv_color_t  color;
+};
+
+static MetricMeta get_metric_meta(Metric m) {
+    switch (m) {
+        case Metric::Rpm:
+            return {"Giri Motore", "RPM", 0, 7000, 0, ValueKind::Generic, lv_color_hex(mf::ACCENT_GREEN)};
+        case Metric::Speed:
+            return {"Velocita' Veicolo", settings::speedUnitSymbol(), 0, 260, 0, ValueKind::SpeedKmh, lv_color_hex(mf::ACCENT_RED)};
+        case Metric::EngineLoad:
+            return {"Carico Motore", "%", 0, 100, 0, ValueKind::Generic, lv_color_hex(mf::ACCENT_AMBER)};
+        case Metric::Throttle:
+            return {"Posizione Farfalla", "%", 0, 100, 0, ValueKind::Generic, lv_color_hex(mf::ACCENT_CYAN)};
+        case Metric::CoolantTempC:
+            return {"Liquido Raffreddamento", settings::tempUnitSymbol(), 40, 130, 0, ValueKind::TempC, lv_color_hex(mf::ACCENT_AMBER)};
+        case Metric::IntakeAirTempC:
+            return {"Aria Aspirata (IAT)", settings::tempUnitSymbol(), -10, 80, 0, ValueKind::TempC, lv_color_hex(mf::ACCENT_CYAN)};
+        case Metric::AmbientTempC:
+            return {"Temperatura Esterna", settings::tempUnitSymbol(), -20, 50, 0, ValueKind::TempC, lv_color_hex(mf::TEXT_MUTED)};
+        case Metric::OilTempC:
+            return {"Olio Motore", settings::tempUnitSymbol(), 50, 150, 0, ValueKind::TempC, lv_color_hex(mf::ACCENT_RED)};
+        case Metric::EgtC:
+            return {"Gas Scarico (EGT)", settings::tempUnitSymbol(), 100, 950, 0, ValueKind::TempC, lv_color_hex(mf::ACCENT_RED)};
+        case Metric::BoostKpa:
+            return {"Pressione Collettore (MAP)", settings::pressureUnitSymbol(), 20, 260, 0, ValueKind::PressureKpa, lv_color_hex(mf::ACCENT_AMBER)};
+        case Metric::BoostRelBar:
+            return {"Pressione Turbo (Boost)", "bar", -0.5f, 2.5f, 2, ValueKind::Generic, lv_color_hex(mf::ACCENT_RED)};
+        case Metric::OilPressureBar:
+            return {"Pressione Olio", "bar", 0.0f, 7.0f, 1, ValueKind::Generic, lv_color_hex(mf::ACCENT_CYAN)};
+        case Metric::BatteryVolts:
+            return {"Tensione Batteria", "V", 9.0f, 16.0f, 2, ValueKind::Generic, lv_color_hex(mf::ACCENT_GREEN)};
+        case Metric::Afr:
+            return {"Rapporto Stechiometrico (AFR)", "", 10.0f, 20.0f, 2, ValueKind::Generic, lv_color_hex(mf::ACCENT_CYAN)};
+        case Metric::FuelLevelPct:
+            return {"Livello Serbatoio", "%", 0, 100, 0, ValueKind::Generic, lv_color_hex(mf::ACCENT_GREEN)};
+        case Metric::FuelPressureKpa:
+            return {"Rail Carburante", settings::pressureUnitSymbol(), 0, 16000, 0, ValueKind::PressureKpa, lv_color_hex(mf::ACCENT_GREEN)};
+        case Metric::FuelRateLh:
+            return {"Portata Carburante", "L/h", 0, 50, 2, ValueKind::Generic, lv_color_hex(mf::ACCENT_CYAN)};
+        case Metric::FuelConsumptionL100:
+            return {"Consumo Istantaneo", "L/100", 0, 30, 1, ValueKind::Generic, lv_color_hex(mf::ACCENT_AMBER)};
+        case Metric::FuelTempC:
+            return {"Temperatura Carburante", settings::tempUnitSymbol(), 0, 80, 0, ValueKind::TempC, lv_color_hex(mf::ACCENT_AMBER)};
+        case Metric::FuelInjectionTiming:
+            return {"Anticipo Iniezione", "deg", -10, 50, 1, ValueKind::Generic, lv_color_hex(mf::ACCENT_CYAN)};
+        case Metric::EthanolPct:
+            return {"Percentuale Etanolo", "%", 0, 100, 0, ValueKind::Generic, lv_color_hex(mf::ACCENT_GREEN)};
+        case Metric::DistanceSinceClear:
+            return {"Km da Reset DTC", "km", 0, 1000, 0, ValueKind::Generic, lv_color_hex(mf::TEXT_MUTED)};
+        default:
+            return {"Sensore", "", 0, 100, 0, ValueKind::Generic, lv_color_hex(mf::TEXT_WHITE)};
+    }
+}
+
+static MinimalStrip* add_strip_internal(lv_obj_t* parent, Metric m, const char* title,
+                                        const char* unit, float min_v, float max_v,
+                                        int decimals, ValueKind kind,
+                                        lv_color_t accent_color, bool is_custom) {
+    MinimalStrip* s_ptr = nullptr;
+    if (is_custom) {
+        if (g_custom_strip_count >= g_custom_strips.size()) return nullptr;
+        s_ptr = &g_custom_strips[g_custom_strip_count++];
+    } else {
+        if (g_mf_strip_count >= g_mf_strips.size()) return nullptr;
+        s_ptr = &g_mf_strips[g_mf_strip_count++];
+    }
+
+    MinimalStrip& s = *s_ptr;
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
 
-    MinimalStrip& s = g_mf_strips[g_mf_strip_count++];
     s.metric   = m;
     s.kind     = kind;
     s.decimals = decimals;
@@ -668,6 +858,7 @@ void add_minimal_strip(lv_obj_t* parent, Metric m, const char* title,
 
     // Row container (ingrandito per visibilita' in vettura)
     lv_obj_t* row = lv_obj_create(parent);
+    s.row = row;
     lv_obj_remove_style_all(row);
     lv_obj_set_size(row, LV_PCT(100), is_portrait ? 84 : 80);
     lv_obj_set_style_bg_color(row, lv_color_hex(mf::SURFACE_DARK), 0);
@@ -746,6 +937,22 @@ void add_minimal_strip(lv_obj_t* parent, Metric m, const char* title,
     lv_label_set_text(s.unit_label, unit);
     lv_obj_set_style_text_color(s.unit_label, lv_color_hex(mf::ACCENT_RED), 0);
     lv_obj_set_style_text_font(s.unit_label, is_portrait ? &lv_font_montserrat_16 : &lv_font_montserrat_18, 0);
+
+    return s_ptr;
+}
+
+void add_minimal_strip(lv_obj_t* parent, Metric m, const char* title,
+                       const char* unit, float min_v, float max_v,
+                       int decimals = 1, ValueKind kind = ValueKind::Generic,
+                       lv_color_t accent_color = lv_color_hex(mf::ACCENT_RED)) {
+    add_strip_internal(parent, m, title, unit, min_v, max_v, decimals, kind, accent_color, false);
+}
+
+void add_custom_strip(lv_obj_t* parent, Metric m, const char* title,
+                      const char* unit, float min_v, float max_v,
+                      int decimals = 1, ValueKind kind = ValueKind::Generic,
+                      lv_color_t accent_color = lv_color_hex(mf::ACCENT_RED)) {
+    add_strip_internal(parent, m, title, unit, min_v, max_v, decimals, kind, accent_color, true);
 }
 
 void build_minimal_cockpit_tab(lv_obj_t* tab) {
@@ -757,6 +964,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // 1. TOP ROW: Progressive Rev Bar & Shift Indicator (Altezza e font maggiorati per guida)
     lv_obj_t* rev_card = lv_obj_create(tab);
+    g_mf_dash.rev_card = rev_card;
     lv_obj_remove_style_all(rev_card);
     lv_obj_set_size(rev_card, LV_PCT(100), is_portrait ? 64 : 60);
     lv_obj_set_style_bg_color(rev_card, lv_color_hex(mf::SURFACE_DARK), 0);
@@ -809,6 +1017,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // 2. MIDDLE SECTION: Speedometer Hero + Engine Load & Throttle
     lv_obj_t* mid_row = lv_obj_create(tab);
+    g_mf_dash.mid_row = mid_row;
     lv_obj_remove_style_all(mid_row);
     lv_obj_set_size(mid_row, LV_PCT(100), is_portrait ? LV_SIZE_CONTENT : 225);
     lv_obj_set_flex_flow(mid_row, is_portrait ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
@@ -817,6 +1026,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // 2A. Speedometer Hero Box
     lv_obj_t* spd_card = lv_obj_create(mid_row);
+    g_mf_dash.spd_card = spd_card;
     lv_obj_remove_style_all(spd_card);
     if (is_portrait) {
         lv_obj_set_size(spd_card, LV_PCT(100), 175);
@@ -864,6 +1074,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // 2B. Right Box: Carico & Acceleratore (Valori e barre ingranditi)
     lv_obj_t* dyn_card = lv_obj_create(mid_row);
+    g_mf_dash.dyn_card = dyn_card;
     lv_obj_remove_style_all(dyn_card);
     if (is_portrait) {
         lv_obj_set_size(dyn_card, LV_PCT(100), 140);
@@ -882,6 +1093,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // Carico riga
     lv_obj_t* r_ld = lv_obj_create(dyn_card);
+    g_mf_dash.r_ld = r_ld;
     lv_obj_remove_style_all(r_ld);
     lv_obj_set_size(r_ld, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(r_ld, LV_FLEX_FLOW_ROW);
@@ -908,6 +1120,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // Farfalla riga
     lv_obj_t* r_th = lv_obj_create(dyn_card);
+    g_mf_dash.r_th = r_th;
     lv_obj_remove_style_all(r_th);
     lv_obj_set_size(r_th, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(r_th, LV_FLEX_FLOW_ROW);
@@ -934,6 +1147,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // 3. BOTTOM SECTION: 4 Essential Telemetry Pillars (Pilastri maggiorati ad alta leggibilita')
     lv_obj_t* btm_row = lv_obj_create(tab);
+    g_mf_dash.btm_row = btm_row;
     lv_obj_remove_style_all(btm_row);
     lv_obj_set_size(btm_row, LV_PCT(100), is_portrait ? LV_SIZE_CONTENT : 150);
     lv_obj_set_flex_flow(btm_row, is_portrait ? LV_FLEX_FLOW_ROW_WRAP : LV_FLEX_FLOW_ROW);
@@ -945,6 +1159,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
         lv_obj_remove_style_all(p);
         if (is_portrait) {
             lv_obj_set_size(p, LV_PCT(48), 135);
+            lv_obj_set_flex_grow(p, 1);
         } else {
             lv_obj_set_flex_grow(p, 1);
             lv_obj_set_height(p, LV_PCT(100));
@@ -967,6 +1182,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // Pillar 1: BOOST
     lv_obj_t* p1 = make_pillar(btm_row, "TURBO BOOST");
+    g_mf_dash.p1 = p1;
     g_mf_dash.p1_boost_val = lv_label_create(p1);
     lv_label_set_text(g_mf_dash.p1_boost_val, "-- bar");
     lv_obj_set_style_text_color(g_mf_dash.p1_boost_val, lv_color_hex(mf::TEXT_WHITE), 0);
@@ -983,6 +1199,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // Pillar 2: COOLANT TEMP
     lv_obj_t* p2 = make_pillar(btm_row, "TEMP. LIQUIDO");
+    g_mf_dash.p2 = p2;
     g_mf_dash.p2_coolant_val = lv_label_create(p2);
     lv_label_set_text(g_mf_dash.p2_coolant_val, "--");
     lv_obj_set_style_text_color(g_mf_dash.p2_coolant_val, lv_color_hex(mf::TEXT_WHITE), 0);
@@ -995,6 +1212,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // Pillar 3: OIL TEMP
     lv_obj_t* p3 = make_pillar(btm_row, "TEMP. OLIO");
+    g_mf_dash.p3 = p3;
     g_mf_dash.p3_oil_val = lv_label_create(p3);
     lv_label_set_text(g_mf_dash.p3_oil_val, "--");
     lv_obj_set_style_text_color(g_mf_dash.p3_oil_val, lv_color_hex(mf::TEXT_WHITE), 0);
@@ -1007,6 +1225,7 @@ void build_minimal_cockpit_tab(lv_obj_t* tab) {
 
     // Pillar 4: BATTERIA & AFR
     lv_obj_t* p4 = make_pillar(btm_row, "ELETTRICO / AFR");
+    g_mf_dash.p4 = p4;
     g_mf_dash.p4_batt_val = lv_label_create(p4);
     lv_label_set_text(g_mf_dash.p4_batt_val, "-- V");
     lv_obj_set_style_text_color(g_mf_dash.p4_batt_val, lv_color_hex(mf::TEXT_WHITE), 0);
@@ -1329,10 +1548,9 @@ void update_minimal_dashboard(int64_t now_ms) {
         }
     }
 
-    // Telemetry strips update
-    for (size_t i = 0; i < g_mf_strip_count; ++i) {
-        MinimalStrip& st = g_mf_strips[i];
-        if (!st.bar || !st.val_label) continue;
+    // Telemetry strips update (Strisce Fisse & Scheda Personalizzata)
+    auto update_one_strip = [&](MinimalStrip& st) {
+        if (!st.bar || !st.val_label) return;
         Sample s = abarth::data::store().get(st.metric);
         char buf_g[32];
         bool real = format_value(st.kind, st.decimals, s, buf_g, sizeof(buf_g), now_ms);
@@ -1350,8 +1568,9 @@ void update_minimal_dashboard(int64_t now_ms) {
         }
         if (real && s.valid()) {
             float raw = s.value;
-            if (st.kind == ValueKind::TempC)    raw = settings::tempInCurrentUnit(raw);
-            if (st.kind == ValueKind::SpeedKmh) raw = settings::speedInCurrentUnit(raw);
+            if (st.kind == ValueKind::TempC)       raw = settings::tempInCurrentUnit(raw);
+            if (st.kind == ValueKind::SpeedKmh)    raw = settings::speedInCurrentUnit(raw);
+            if (st.kind == ValueKind::PressureKpa) raw = settings::pressureInCurrentUnit(raw);
             float ratio = (raw - st.min_val) / (st.max_val - st.min_val);
             if (ratio < 0.0f) ratio = 0.0f;
             if (ratio > 1.0f) ratio = 1.0f;
@@ -1368,14 +1587,221 @@ void update_minimal_dashboard(int64_t now_ms) {
         }
         if (st.unit_label) {
             const char* sym = st.unit_str;
-            if (st.kind == ValueKind::TempC)    sym = settings::tempUnitSymbol();
-            if (st.kind == ValueKind::SpeedKmh) sym = settings::speedUnitSymbol();
+            if (st.kind == ValueKind::TempC)       sym = settings::tempUnitSymbol();
+            if (st.kind == ValueKind::SpeedKmh)    sym = settings::speedUnitSymbol();
+            if (st.kind == ValueKind::PressureKpa) sym = settings::pressureUnitSymbol();
             lv_label_set_text(st.unit_label, sym);
         }
+    };
+
+    for (size_t i = 0; i < g_mf_strip_count; ++i) {
+        update_one_strip(g_mf_strips[i]);
+    }
+    for (size_t i = 0; i < g_custom_strip_count; ++i) {
+        update_one_strip(g_custom_strips[i]);
     }
 }
 
 }  // namespace
+
+void rebuild_custom_tab() {
+    if (!g_t_custom) return;
+    lv_obj_clean(g_t_custom);
+    g_custom_strip_count = 0;
+
+    lv_obj_set_style_bg_opa(g_t_custom, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(g_t_custom, 8, 0);
+    lv_obj_set_style_pad_row(g_t_custom, 8, 0);
+    lv_obj_set_flex_flow(g_t_custom, LV_FLEX_FLOW_COLUMN);
+
+    uint8_t added = 0;
+    for (uint8_t i = 0; i < static_cast<uint8_t>(Metric::Count_); ++i) {
+        Metric m = static_cast<Metric>(i);
+        if (!abarth::settings::isMetricInCustomTab(m)) continue;
+
+        MetricMeta meta = get_metric_meta(m);
+        add_custom_strip(g_t_custom, m, meta.title, meta.unit, meta.min_v, meta.max_v, meta.decimals, meta.kind, meta.color);
+        added++;
+    }
+
+    if (added == 0) {
+        lv_obj_t* empty_box = lv_obj_create(g_t_custom);
+        lv_obj_remove_style_all(empty_box);
+        lv_obj_set_size(empty_box, LV_PCT(100), 200);
+        lv_obj_set_style_bg_color(empty_box, lv_color_hex(mf::SURFACE_DARK), 0);
+        lv_obj_set_style_bg_opa(empty_box, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(empty_box, 12, 0);
+        lv_obj_set_style_border_width(empty_box, 1, 0);
+        lv_obj_set_style_border_color(empty_box, lv_color_hex(mf::SURFACE_BORDER), 0);
+        lv_obj_set_flex_flow(empty_box, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(empty_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_all(empty_box, 16, 0);
+        lv_obj_set_style_pad_row(empty_box, 10, 0);
+
+        lv_obj_t* icon = lv_label_create(empty_box);
+        lv_label_set_text(icon, LV_SYMBOL_SETTINGS);
+        lv_obj_set_style_text_font(icon, &lv_font_montserrat_28, 0);
+        lv_obj_set_style_text_color(icon, lv_color_hex(mf::TEXT_DIM), 0);
+
+        lv_obj_t* t = lv_label_create(empty_box);
+        lv_label_set_text(t, "Pannello Personalizzato Vuoto");
+        lv_obj_set_style_text_font(t, &lv_font_montserrat_18, 0);
+        lv_obj_set_style_text_color(t, lv_color_hex(mf::TEXT_WHITE), 0);
+
+        lv_obj_t* sub = lv_label_create(empty_box);
+        lv_label_set_text(sub, "Vai in Impostazioni -> Personalizza Manometri\nper scegliere cosa visualizzare qui.");
+        lv_obj_set_style_text_font(sub, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(sub, lv_color_hex(mf::TEXT_MUTED), 0);
+        lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
+    }
+}
+
+void apply_metric_visibility() {
+    // 1. Visibilità pulsante scheda custom sulla tab bar
+    bool custom_en = abarth::settings::isCustomTabEnabled();
+    if (g_tab_btn_custom) {
+        if (custom_en) {
+            lv_obj_clear_flag(g_tab_btn_custom, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            if (g_main_tabview && lv_tabview_get_tab_active(g_main_tabview) == 5) {
+                lv_tabview_set_act(g_main_tabview, 0, LV_ANIM_OFF);
+            }
+            lv_obj_add_flag(g_tab_btn_custom, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    // 2. Cockpit - RPM (rev_card)
+    if (g_mf_dash.rev_card) {
+        if (abarth::settings::isMetricVisible(Metric::Rpm)) {
+            lv_obj_clear_flag(g_mf_dash.rev_card, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(g_mf_dash.rev_card, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    // 3. Cockpit - Middle Section (Speed & Dynamic Load/Throttle)
+    const bool spd_vis = abarth::settings::isMetricVisible(Metric::Speed);
+    const bool load_vis = abarth::settings::isMetricVisible(Metric::EngineLoad);
+    const bool th_vis = abarth::settings::isMetricVisible(Metric::Throttle);
+    const bool dyn_vis = (load_vis || th_vis);
+    const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
+
+    if (g_mf_dash.spd_card) {
+        if (spd_vis) {
+            lv_obj_clear_flag(g_mf_dash.spd_card, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(g_mf_dash.spd_card, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    if (g_mf_dash.dyn_card) {
+        if (dyn_vis) {
+            lv_obj_clear_flag(g_mf_dash.dyn_card, LV_OBJ_FLAG_HIDDEN);
+            if (g_mf_dash.r_ld) {
+                if (load_vis) lv_obj_clear_flag(g_mf_dash.r_ld, LV_OBJ_FLAG_HIDDEN);
+                else          lv_obj_add_flag(g_mf_dash.r_ld, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (g_mf_dash.load_bar) {
+                if (load_vis) lv_obj_clear_flag(g_mf_dash.load_bar, LV_OBJ_FLAG_HIDDEN);
+                else          lv_obj_add_flag(g_mf_dash.load_bar, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (g_mf_dash.r_th) {
+                if (th_vis) lv_obj_clear_flag(g_mf_dash.r_th, LV_OBJ_FLAG_HIDDEN);
+                else        lv_obj_add_flag(g_mf_dash.r_th, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (g_mf_dash.throttle_bar) {
+                if (th_vis) lv_obj_clear_flag(g_mf_dash.throttle_bar, LV_OBJ_FLAG_HIDDEN);
+                else        lv_obj_add_flag(g_mf_dash.throttle_bar, LV_OBJ_FLAG_HIDDEN);
+            }
+        } else {
+            lv_obj_add_flag(g_mf_dash.dyn_card, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    if (g_mf_dash.mid_row) {
+        if (!spd_vis && !dyn_vis) {
+            lv_obj_add_flag(g_mf_dash.mid_row, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(g_mf_dash.mid_row, LV_OBJ_FLAG_HIDDEN);
+            if (is_portrait) {
+                if (spd_vis && dyn_vis) {
+                    lv_obj_set_size(g_mf_dash.spd_card, LV_PCT(100), 175);
+                    lv_obj_set_size(g_mf_dash.dyn_card, LV_PCT(100), (load_vis && th_vis) ? 140 : 80);
+                } else if (spd_vis && !dyn_vis) {
+                    lv_obj_set_size(g_mf_dash.spd_card, LV_PCT(100), 220);
+                } else if (!spd_vis && dyn_vis) {
+                    lv_obj_set_size(g_mf_dash.dyn_card, LV_PCT(100), (load_vis && th_vis) ? 170 : 100);
+                }
+            } else {
+                if (spd_vis && dyn_vis) {
+                    lv_obj_set_size(g_mf_dash.spd_card, LV_PCT(62), LV_PCT(100));
+                    lv_obj_set_size(g_mf_dash.dyn_card, LV_PCT(36), LV_PCT(100));
+                } else if (spd_vis && !dyn_vis) {
+                    lv_obj_set_size(g_mf_dash.spd_card, LV_PCT(100), LV_PCT(100));
+                } else if (!spd_vis && dyn_vis) {
+                    lv_obj_set_size(g_mf_dash.dyn_card, LV_PCT(100), LV_PCT(100));
+                }
+            }
+        }
+    }
+
+    // 4. Cockpit - Bottom Section (4 Pillars)
+    const bool p1_vis = abarth::settings::isMetricVisible(Metric::BoostRelBar) || abarth::settings::isMetricVisible(Metric::BoostKpa);
+    const bool p2_vis = abarth::settings::isMetricVisible(Metric::CoolantTempC);
+    const bool p3_vis = abarth::settings::isMetricVisible(Metric::OilTempC);
+    const bool p4_vis = abarth::settings::isMetricVisible(Metric::BatteryVolts) || abarth::settings::isMetricVisible(Metric::Afr);
+
+    if (g_mf_dash.p1) {
+        if (p1_vis) lv_obj_clear_flag(g_mf_dash.p1, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_add_flag(g_mf_dash.p1, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (g_mf_dash.p2) {
+        if (p2_vis) lv_obj_clear_flag(g_mf_dash.p2, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_add_flag(g_mf_dash.p2, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (g_mf_dash.p3) {
+        if (p3_vis) lv_obj_clear_flag(g_mf_dash.p3, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_add_flag(g_mf_dash.p3, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (g_mf_dash.p4) {
+        if (p4_vis) lv_obj_clear_flag(g_mf_dash.p4, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_add_flag(g_mf_dash.p4, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    int visible_pillars = (p1_vis ? 1 : 0) + (p2_vis ? 1 : 0) + (p3_vis ? 1 : 0) + (p4_vis ? 1 : 0);
+    if (g_mf_dash.btm_row) {
+        if (visible_pillars == 0) {
+            lv_obj_add_flag(g_mf_dash.btm_row, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(g_mf_dash.btm_row, LV_OBJ_FLAG_HIDDEN);
+            if (is_portrait) {
+                lv_obj_t* p_arr[4] = { g_mf_dash.p1, g_mf_dash.p2, g_mf_dash.p3, g_mf_dash.p4 };
+                bool vis_arr[4] = { p1_vis, p2_vis, p3_vis, p4_vis };
+                for (int i = 0; i < 4; ++i) {
+                    if (p_arr[i] && vis_arr[i]) {
+                        if (visible_pillars == 1) {
+                            lv_obj_set_width(p_arr[i], LV_PCT(100));
+                        } else {
+                            lv_obj_set_width(p_arr[i], LV_PCT(48));
+                            lv_obj_set_flex_grow(p_arr[i], 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Strisce telemetriche fisse (Tabs 1, 2, 3, 4)
+    for (size_t i = 0; i < g_mf_strip_count; ++i) {
+        MinimalStrip& st = g_mf_strips[i];
+        if (!st.row) continue;
+        if (abarth::settings::isMetricVisible(st.metric)) {
+            lv_obj_clear_flag(st.row, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(st.row, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
 
 void build() {
     // LVGL gira in un task dedicato (port v8): ogni accesso alle API LVGL va
@@ -1801,7 +2227,7 @@ void build() {
     lv_obj_add_flag(g_conn_badge, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(g_conn_badge, [](lv_event_t* e) {
         lv_obj_t* tv = (lv_obj_t*)lv_event_get_user_data(e);
-        if (tv) lv_tabview_set_act(tv, 5, LV_ANIM_OFF);
+        if (tv) lv_tabview_set_act(tv, 6, LV_ANIM_OFF);
     }, LV_EVENT_CLICKED, tabview);
 
     lv_obj_add_flag(left_box, LV_OBJ_FLAG_CLICKABLE);
@@ -1817,13 +2243,15 @@ void build() {
         lv_obj_set_scroll_dir(tv_content, LV_DIR_NONE);
     }
 
-    lv_obj_t* t_motor = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_POWER " Motore" : LV_SYMBOL_POWER " Motore");
-    lv_obj_t* t_temp  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_REFRESH " Temp" : LV_SYMBOL_REFRESH " Temperature");
-    lv_obj_t* t_pres  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_DRIVE " Press" : LV_SYMBOL_DRIVE " Pressioni");
-    lv_obj_t* t_elec  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_CHARGE " Volt" : LV_SYMBOL_CHARGE " Elettrico");
-    lv_obj_t* t_fuel  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_TINT " Fuel" : LV_SYMBOL_BATTERY_FULL " Carburante");
-    lv_obj_t* t_info  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_LIST " Stato" : LV_SYMBOL_LIST " Stato");
-    lv_obj_t* t_set   = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_SETTINGS " Setup" : LV_SYMBOL_SETTINGS " Impostazioni");
+    lv_obj_t* t_motor  = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_POWER " Motore" : LV_SYMBOL_POWER " Motore");
+    lv_obj_t* t_temp   = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_REFRESH " Temp" : LV_SYMBOL_REFRESH " Temperature");
+    lv_obj_t* t_pres   = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_DRIVE " Press" : LV_SYMBOL_DRIVE " Pressioni");
+    lv_obj_t* t_elec   = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_CHARGE " Volt" : LV_SYMBOL_CHARGE " Elettrico");
+    lv_obj_t* t_fuel   = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_TINT " Fuel" : LV_SYMBOL_BATTERY_FULL " Carburante");
+    lv_obj_t* t_custom = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_SHUFFLE " Custom" : LV_SYMBOL_SHUFFLE " Personalizzato");
+    lv_obj_t* t_set    = lv_tabview_add_tab(tabview, is_portrait_mode ? LV_SYMBOL_SETTINGS " Setup" : LV_SYMBOL_SETTINGS " Impostazioni");
+
+    g_t_custom = t_custom;
 
     lv_obj_t* tab_bar = lv_tabview_get_tab_bar(tabview);
     if (tab_bar) {
@@ -1839,6 +2267,7 @@ void build() {
         for (uint32_t i = 0; i < btn_cnt; i++) {
             lv_obj_t* btn = lv_obj_get_child(tab_bar, i);
             if (!btn) continue;
+            lv_obj_set_flex_grow(btn, 1);
             lv_obj_set_style_pad_hor(btn, 1, 0);
             lv_obj_set_style_pad_ver(btn, 2, 0);
             lv_obj_set_style_radius(btn, 0, 0);
@@ -1856,6 +2285,7 @@ void build() {
                 lv_obj_set_style_text_color(lbl, lv_color_hex(mf::TEXT_WHITE), LV_STATE_CHECKED);
             }
         }
+        g_tab_btn_custom = lv_obj_get_child(tab_bar, 5);
     }
 
     /* === MINIMAL FUNZIONALE: Cockpit Essenziale e Strisce Telemetriche === */
@@ -1864,123 +2294,13 @@ void build() {
     build_minimal_pressure_tab(t_pres);
     build_minimal_electric_tab(t_elec);
     build_minimal_fuel_tab(t_fuel);
-
-    /* Stato ---------------------------------------------------------------- */
-    lv_obj_set_style_pad_all(t_info, 16, 0);
-    lv_obj_set_flex_flow(t_info, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(t_info, 16, 0);
-
-    // Contenitore per le 2 Card superiori (Fianco a Fianco)
-    lv_obj_t* row_top = lv_obj_create(t_info);
-    lv_obj_remove_style_all(row_top);
-    lv_obj_set_size(row_top, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row_top, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row_top, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    // Card 1: Dispositivo & Connessione (49% larghezza)
-    lv_obj_t* c_dev = lv_obj_create(row_top);
-    lv_obj_add_style(c_dev, &style_card, 0);
-    lv_obj_set_size(c_dev, LV_PCT(49), 190);
-    lv_obj_set_flex_flow(c_dev, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(c_dev, 8, 0);
-
-    lv_obj_t* dev_title = lv_label_create(c_dev);
-    lv_obj_set_style_text_font(dev_title, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(dev_title, lv_color_hex(0xCC3030), 0);
-    lv_label_set_text(dev_title, "DISPOSITIVO DIAGNOSI OBD");
-
-    g_device_label = lv_label_create(c_dev);
-    lv_obj_set_style_text_font(g_device_label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(g_device_label, lv_color_hex(0xF8F8F8), 0);
-    lv_label_set_text(g_device_label, "Dispositivo: In ricerca...");
-
-    lv_obj_t* st_hdr = lv_label_create(c_dev);
-    lv_obj_set_style_text_font(st_hdr, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(st_hdr, lv_color_hex(0x9A9AA6), 0);
-    lv_label_set_text(st_hdr, "Stato Connessione:");
-
-    g_status_state_label = lv_label_create(c_dev);
-    lv_obj_set_style_text_font(g_status_state_label, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(g_status_state_label, lv_color_hex(0x9A9AA6), 0);
-    lv_label_set_text(g_status_state_label, "DISCONNESSO");
-
-    // Card 2: Diagnostica CAN / Pacchetti (49% larghezza)
-    lv_obj_t* c_stats = lv_obj_create(row_top);
-    lv_obj_add_style(c_stats, &style_card, 0);
-    lv_obj_set_size(c_stats, LV_PCT(49), 190);
-    lv_obj_set_flex_flow(c_stats, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(c_stats, 8, 0);
-
-    lv_obj_t* stats_title = lv_label_create(c_stats);
-    lv_obj_set_style_text_font(stats_title, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(stats_title, lv_color_hex(0xCC3030), 0);
-    lv_label_set_text(stats_title, "DIAGNOSTICA CAN-BUS");
-
-    // Row interna per OK ed ERR
-    lv_obj_t* cnt_row = lv_obj_create(c_stats);
-    lv_obj_remove_style_all(cnt_row);
-    lv_obj_set_size(cnt_row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(cnt_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(cnt_row, LV_FLEX_ALIGN_SPACE_AROUND, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    // Box OK
-    lv_obj_t* box_ok = lv_obj_create(cnt_row);
-    lv_obj_remove_style_all(box_ok);
-    lv_obj_set_flex_flow(box_ok, LV_FLEX_FLOW_COLUMN);
-
-    lv_obj_t* lbl_ok_t = lv_label_create(box_ok);
-    lv_obj_set_style_text_font(lbl_ok_t, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_ok_t, lv_color_hex(0x9A9AA6), 0);
-    lv_label_set_text(lbl_ok_t, "Letture OK");
-
-    g_ok_counter_label = lv_label_create(box_ok);
-    lv_obj_set_style_text_font(g_ok_counter_label, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(g_ok_counter_label, lv_color_hex(0x30CC60), 0);
-    lv_label_set_text(g_ok_counter_label, "0");
-
-    // Box ERR
-    lv_obj_t* box_err = lv_obj_create(cnt_row);
-    lv_obj_remove_style_all(box_err);
-    lv_obj_set_flex_flow(box_err, LV_FLEX_FLOW_COLUMN);
-
-    lv_obj_t* lbl_err_t = lv_label_create(box_err);
-    lv_obj_set_style_text_font(lbl_err_t, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_err_t, lv_color_hex(0x9A9AA6), 0);
-    lv_label_set_text(lbl_err_t, "Errori / Retry");
-
-    g_err_counter_label = lv_label_create(box_err);
-    lv_obj_set_style_text_font(g_err_counter_label, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(g_err_counter_label, lv_color_hex(0xFF5252), 0);
-    lv_label_set_text(g_err_counter_label, "0");
-
-    g_last_err_label = lv_label_create(c_stats);
-    lv_obj_set_style_text_font(g_last_err_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(g_last_err_label, lv_color_hex(0x9A9AA6), 0);
-    lv_label_set_text(g_last_err_label, "Nessun errore rilevato");
-
-    // Card 3: Guida agli Stati (100% larghezza)
-    lv_obj_t* c_guide = lv_obj_create(t_info);
-    lv_obj_add_style(c_guide, &style_card, 0);
-    lv_obj_set_size(c_guide, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(c_guide, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(c_guide, 8, 0);
-
-    lv_obj_t* guide_title = lv_label_create(c_guide);
-    lv_obj_set_style_text_font(guide_title, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(guide_title, lv_color_hex(0xCC3030), 0);
-    lv_label_set_text(guide_title, "GUIDA MONITORAGGIO DONGLE & ECU");
-
-    lv_obj_t* hint = lv_label_create(c_guide);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(hint, lv_color_hex(0xDEDEDE), 0);
-    lv_label_set_text(hint,
-        "• Disconnesso: Adattatore OBD non collegato o disattivato.\n"
-        "• Attesa...: Comunicazione avviata, dati PID in arrivo dall'auto.\n"
-        "• Non supportato: PID non risposto dalla centralina ECU Abarth.\n"
-        "• Supporto Dongle: Compatibile con dispositivi BLE (vLinker, OBDLink CX, ELM327) e WiFi.");
+    rebuild_custom_tab();
 
     /* Impostazioni --------------------------------------------------------- */
     settings_tab::build(t_set);
+
+    /* Applica visibilità iniziale configurata ------------------------------ */
+    apply_metric_visibility();
 
     /* Timer periodico UI --------------------------------------------------- */
 #ifndef ABARTH_DIAG_NO_UI_TIMER
@@ -1995,3 +2315,4 @@ void build() {
 }
 
 }  // namespace abarth::ui
+

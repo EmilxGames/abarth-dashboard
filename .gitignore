@@ -10,3 +10,8 @@ __pycache__/
 build/
 dist/
 .DS_Store
+
+# ESP-IDF component manager (rigenerato da dependencies.lock)
+managed_components/
+# immagini OTA generate
+/update.bin

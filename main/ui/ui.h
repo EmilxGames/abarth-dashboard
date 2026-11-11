@@ -21,4 +21,11 @@ namespace abarth::ui {
 /// Costruisce l'intera UI. Da chiamare dopo `display::init()`.
 void build();
 
+/// Applica immediatamente lo stato di visibilità dei manometri e delle schede
+/// aggiornando layout, nascondendo/mostrando elementi ed espandendo gli spazi liberi.
+void apply_metric_visibility();
+
+/// Ricostruisce dinamicamente i widget del Pannello Personalizzato (Custom Tab)
+void rebuild_custom_tab();
+
 }  // namespace abarth::ui

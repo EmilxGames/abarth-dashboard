@@ -127,6 +127,12 @@ void ObdManager::run() {
         switch (state_.load()) {
             case ObdState::Disconnected:
             case ObdState::Error: {
+                if (s.connection_mode == settings::ConnectionMode::DirectCan) {
+                    // Modalita' attiva e' CAN-Bus Diretto (TWAI): il task OBD resta in standby
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    continue;
+                }
+
                 if (!s.auto_connect && !manual_connection_req_) {
                     // Idle mode (riconnessione automatica disattivata da impostazioni)
                     vTaskDelay(pdMS_TO_TICKS(1000));

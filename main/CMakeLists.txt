@@ -1,5 +1,6 @@
 idf_component_register(
     SRC_DIRS "."
+             "can"
              "config"
              "data"
              "display"
@@ -7,6 +8,7 @@ idf_component_register(
              "storage"
              "ui"
     INCLUDE_DIRS "."
+                 "can"
                  "config"
                  "data"
                  "display"

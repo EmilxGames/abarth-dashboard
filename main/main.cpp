@@ -18,6 +18,7 @@
 #include "data/data_store.h"
 #include "display/board.h"
 #include "obd/obd_manager.h"
+#include "can/can_manager.h"
 #include "storage/sd_card_manager.h"
 #include "storage/rtc_manager.h"
 #include "storage/ota_updater.h"
@@ -129,12 +130,19 @@ extern "C" void app_main(void) {
     }
 
 #ifndef ABARTH_DIAG_SKIP_OBD
-    DIAG("step: OBD start");
-    if (!abarth::obd::obd().start()) {
-        DIAG("ERRORE OBD start");
+    if (abarth::settings::current().connection_mode == abarth::settings::ConnectionMode::DirectCan) {
+        DIAG("step: CAN-Bus start (TWAI ISOCAN)");
+        if (!abarth::can::can().start()) {
+            DIAG("ERRORE CAN start");
+        }
+    } else {
+        DIAG("step: OBD start");
+        if (!abarth::obd::obd().start()) {
+            DIAG("ERRORE OBD start");
+        }
     }
 #else
-    DIAG("step: OBD start SKIPPED (ABARTH_DIAG_SKIP_OBD)");
+    DIAG("step: OBD/CAN start SKIPPED (ABARTH_DIAG_SKIP_OBD)");
 #endif
 
     auto wait_splash = [](int total_ms) {
@@ -147,7 +155,11 @@ extern "C" void app_main(void) {
     };
 
     DIAG("step: splash hold stages");
-    abarth::ui::splash::setStatus("Inizializzazione Bluetooth OBD-II...");
+    if (abarth::settings::current().connection_mode == abarth::settings::ConnectionMode::DirectCan) {
+        abarth::ui::splash::setStatus("Inizializzazione CAN-Bus Diretto (TWAI)...");
+    } else {
+        abarth::ui::splash::setStatus("Inizializzazione Bluetooth OBD-II...");
+    }
     wait_splash(1800);
     abarth::ui::splash::setStatus("Caricamento telemetria Abarth 595...");
     wait_splash(1800);

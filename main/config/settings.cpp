@@ -32,6 +32,18 @@ constexpr const char* kKeyOilWarmupWTemp= "ow_wtemp";
 constexpr const char* kKeyOilWarmupTime = "ow_time";
 constexpr const char* kKeyOilColdRpm    = "ow_rpm";
 constexpr const char* kKeyOilVirtDisplay= "ow_vdisp";
+constexpr const char* kKeyCustTabEn     = "ctab_en";
+constexpr const char* kKeyCustMask      = "ctab_msk";
+constexpr const char* kKeyConnMode      = "conn_mode";
+constexpr const char* kKeyCan1En        = "can1_en";
+constexpr const char* kKeyCan1Tx        = "can1_tx";
+constexpr const char* kKeyCan1Rx        = "can1_rx";
+constexpr const char* kKeyCan1Baud      = "can1_baud";
+constexpr const char* kKeyCan2En        = "can2_en";
+constexpr const char* kKeyCan2Tx        = "can2_tx";
+constexpr const char* kKeyCan2Rx        = "can2_rx";
+constexpr const char* kKeyCan2Baud      = "can2_baud";
+constexpr const char* kKeyCanListenOnly = "can_l_only";
 
 Settings g_settings;
 bool     g_ready = false;
@@ -119,6 +131,23 @@ bool init() {
     g_settings.oil_warmup_countdown_sec = static_cast<uint16_t>(load_u32(kKeyOilWarmupTime, g_settings.oil_warmup_countdown_sec));
     g_settings.oil_cold_rpm_limit = static_cast<float>(load_u32(kKeyOilColdRpm, static_cast<uint32_t>(g_settings.oil_cold_rpm_limit)));
     g_settings.oil_virtual_temp_display = load_u8(kKeyOilVirtDisplay, g_settings.oil_virtual_temp_display ? 1 : 0) != 0;
+    g_settings.custom_tab_enabled = load_u8(kKeyCustTabEn, g_settings.custom_tab_enabled ? 1 : 0) != 0;
+    constexpr uint32_t kDefCustomMask = (1U << static_cast<uint8_t>(abarth::data::Metric::Speed)) |
+                                        (1U << static_cast<uint8_t>(abarth::data::Metric::Rpm)) |
+                                        (1U << static_cast<uint8_t>(abarth::data::Metric::BoostRelBar)) |
+                                        (1U << static_cast<uint8_t>(abarth::data::Metric::OilTempC)) |
+                                        (1U << static_cast<uint8_t>(abarth::data::Metric::CoolantTempC));
+    g_settings.custom_tab_metrics_mask = load_u32(kKeyCustMask, kDefCustomMask);
+    g_settings.connection_mode = static_cast<ConnectionMode>(load_u8(kKeyConnMode, static_cast<uint8_t>(g_settings.connection_mode)));
+    g_settings.can1_enabled = load_u8(kKeyCan1En, g_settings.can1_enabled ? 1 : 0) != 0;
+    g_settings.can1_tx_pin = load_u8(kKeyCan1Tx, g_settings.can1_tx_pin);
+    g_settings.can1_rx_pin = load_u8(kKeyCan1Rx, g_settings.can1_rx_pin);
+    g_settings.can1_baud_rate = load_u32(kKeyCan1Baud, g_settings.can1_baud_rate);
+    g_settings.can2_enabled = load_u8(kKeyCan2En, g_settings.can2_enabled ? 1 : 0) != 0;
+    g_settings.can2_tx_pin = load_u8(kKeyCan2Tx, g_settings.can2_tx_pin);
+    g_settings.can2_rx_pin = load_u8(kKeyCan2Rx, g_settings.can2_rx_pin);
+    g_settings.can2_baud_rate = load_u32(kKeyCan2Baud, g_settings.can2_baud_rate);
+    g_settings.can_listen_only = load_u8(kKeyCanListenOnly, g_settings.can_listen_only ? 1 : 0) != 0;
     g_ready = true;
     ESP_LOGI(TAG, "loaded: brightness=%u tempUnit=%u speedUnit=%u uiTheme=%u bg=%u darkTheme=%d autoConn=%d demoMode=%d",
              g_settings.brightness,
@@ -290,6 +319,99 @@ void setOilColdRpmLimit(float rpm) {
 void setOilVirtualTempDisplay(bool enable) {
     g_settings.oil_virtual_temp_display = enable;
     save_u8(kKeyOilVirtDisplay, enable ? 1 : 0);
+}
+
+bool isCustomTabEnabled() {
+    return g_settings.custom_tab_enabled;
+}
+
+void setCustomTabEnabled(bool enable) {
+    g_settings.custom_tab_enabled = enable;
+    save_u8(kKeyCustTabEn, enable ? 1 : 0);
+}
+
+bool isMetricInCustomTab(abarth::data::Metric m) {
+    uint8_t idx = static_cast<uint8_t>(m);
+    if (idx >= static_cast<uint8_t>(abarth::data::Metric::Count_)) return false;
+    return (g_settings.custom_tab_metrics_mask & (1U << idx)) != 0;
+}
+
+void setMetricInCustomTab(abarth::data::Metric m, bool in_custom) {
+    uint8_t idx = static_cast<uint8_t>(m);
+    if (idx >= static_cast<uint8_t>(abarth::data::Metric::Count_)) return;
+    if (in_custom) {
+        g_settings.custom_tab_metrics_mask |= (1U << idx);
+    } else {
+        g_settings.custom_tab_metrics_mask &= ~(1U << idx);
+    }
+    save_u32(kKeyCustMask, g_settings.custom_tab_metrics_mask);
+}
+
+uint32_t getCustomTabMask() {
+    return g_settings.custom_tab_metrics_mask;
+}
+
+void setCustomTabMask(uint32_t mask) {
+    g_settings.custom_tab_metrics_mask = mask;
+    save_u32(kKeyCustMask, mask);
+}
+
+void setConnectionMode(ConnectionMode mode) {
+    g_settings.connection_mode = mode;
+    save_u8(kKeyConnMode, static_cast<uint8_t>(mode));
+}
+
+ConnectionMode getConnectionMode() {
+    return g_settings.connection_mode;
+}
+
+void setCan1Enabled(bool en) {
+    g_settings.can1_enabled = en;
+    save_u8(kKeyCan1En, en ? 1 : 0);
+}
+
+bool isCan1Enabled() {
+    return g_settings.can1_enabled;
+}
+
+void setCan1Config(uint8_t tx, uint8_t rx, uint32_t baud) {
+    g_settings.can1_tx_pin = tx;
+    g_settings.can1_rx_pin = rx;
+    g_settings.can1_baud_rate = baud;
+    save_u8(kKeyCan1Tx, tx);
+    save_u8(kKeyCan1Rx, rx);
+    save_u32(kKeyCan1Baud, baud);
+}
+
+void setCan2Enabled(bool en) {
+    g_settings.can2_enabled = en;
+    save_u8(kKeyCan2En, en ? 1 : 0);
+}
+
+bool isCan2Enabled() {
+    return g_settings.can2_enabled;
+}
+
+void setCan2Config(uint8_t tx, uint8_t rx, uint32_t baud) {
+    g_settings.can2_tx_pin = tx;
+    g_settings.can2_rx_pin = rx;
+    g_settings.can2_baud_rate = baud;
+    save_u8(kKeyCan2Tx, tx);
+    save_u8(kKeyCan2Rx, rx);
+    save_u32(kKeyCan2Baud, baud);
+}
+
+void setCanListenOnly(bool listen_only) {
+    g_settings.can_listen_only = listen_only;
+    save_u8(kKeyCanListenOnly, listen_only ? 1 : 0);
+}
+
+void setCanPins(uint8_t tx, uint8_t rx) {
+    setCan1Config(tx, rx, g_settings.can1_baud_rate);
+}
+
+void setCanBaudRate(uint32_t baud) {
+    setCan1Config(g_settings.can1_tx_pin, g_settings.can1_rx_pin, baud);
 }
 
 }  // namespace abarth::settings

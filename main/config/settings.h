@@ -59,6 +59,13 @@ enum class ScreenOrientation : uint8_t {
     PortraitInverse = 2, ///< Verticale capovolto 600x1024 (rotazione 270 gradi)
 };
 
+/// Modalita' di collegamento alla vettura
+enum class ConnectionMode : uint8_t {
+    BleObd    = 0,  ///< Dongle Bluetooth LE (vLinker FD / ELM327) - default
+    WifiObd   = 1,  ///< Dongle WiFi OBD (Socket TCP)
+    DirectCan = 2,  ///< Connessione Diretta CAN-Bus (TWAI + WeAct ISOCANFD V1)
+};
+
 struct Settings {
     /// Luminosita' retroilluminazione in percentuale 10..100.
     uint8_t   brightness   = 80;
@@ -77,6 +84,24 @@ struct Settings {
     /// Tema scuro attivo.
     bool      dark_theme   = true;
 
+    /// Modalita' di collegamento alla vettura (BLE, WiFi, Diretto CAN)
+    ConnectionMode connection_mode = ConnectionMode::BleObd;
+
+    /// Parametri CAN-Bus Diretto (TWAI ESP32-P4 + WeAct ISOCANFD V1)
+    /// Rete 1: C-CAN Powertrain (Alta velocita' 500k - TWAI0)
+    bool      can1_enabled        = true;    ///< Abilita CAN 1 (C-CAN Motore)
+    uint8_t   can1_tx_pin         = 20;      ///< GPIO TX TWAI0 (default GPIO 20)
+    uint8_t   can1_rx_pin         = 21;      ///< GPIO RX TWAI0 (default GPIO 21)
+    uint32_t  can1_baud_rate      = 500000;  ///< Baud rate (500 kbps C-CAN Abarth Motore)
+
+    /// Rete 2: B-CAN Body (Bassa velocita' 50k - TWAI1)
+    bool      can2_enabled        = true;    ///< Abilita CAN 2 (B-CAN Carrozzeria)
+    uint8_t   can2_tx_pin         = 32;      ///< GPIO TX TWAI1 (default GPIO 32)
+    uint8_t   can2_rx_pin         = 33;      ///< GPIO RX TWAI1 (default GPIO 33)
+    uint32_t  can2_baud_rate      = 50000;   ///< Baud rate (50 kbps B-CAN Abarth Carrozzeria)
+
+    bool      can_listen_only     = false;   ///< Se true, solo ascolto passivo (nessuna query attiva)
+
     /// Ricerca e connessione automatica OBD all'avvio
     bool      auto_connect = true;
     /// Modalita' simulazione / test con dati telemetrici sintetici
@@ -91,6 +116,10 @@ struct Settings {
     std::string saved_wifi_pass = "";
     /// Maschera di bit dei manometri/indicatori disattivati dall'utente (0 = tutti visibili)
     uint32_t    disabled_metrics_mask = 0;
+    /// Abilitazione della scheda personalizzata [⭐ Custom] sulla dashboard principale
+    bool        custom_tab_enabled    = true;
+    /// Maschera di bit dei parametri telemetrici selezionati nel pannello personalizzato
+    uint32_t    custom_tab_metrics_mask = 0;
 
     // --- Warmup e Stima Virtuale Olio Motore ---
     /// Abilitazione della logica di warmup e protezione motore
@@ -145,6 +174,25 @@ uint16_t orientationToDegrees(ScreenOrientation o);
 /// Imposta la connessione automatica OBD
 void setAutoConnect(bool enable);
 
+/// Modalita' di collegamento alla vettura
+void setConnectionMode(ConnectionMode mode);
+ConnectionMode getConnectionMode();
+
+/// Configurazione CAN-Bus Diretto (Dual CAN TWAI)
+void setCan1Enabled(bool en);
+bool isCan1Enabled();
+void setCan1Config(uint8_t tx, uint8_t rx, uint32_t baud);
+
+void setCan2Enabled(bool en);
+bool isCan2Enabled();
+void setCan2Config(uint8_t tx, uint8_t rx, uint32_t baud);
+
+void setCanListenOnly(bool listen_only);
+
+// Compatibilita' legacy
+void setCanPins(uint8_t tx, uint8_t rx);
+void setCanBaudRate(uint32_t baud);
+
 /// Imposta la modalita' simulazione / test telemetria
 void setDemoMode(bool enable);
 
@@ -171,6 +219,14 @@ const char* speedUnitSymbol();
 bool isMetricVisible(abarth::data::Metric m);
 /// Attiva o disattiva la visibilita' di un indicatore telemetrico.
 void setMetricVisible(abarth::data::Metric m, bool visible);
+
+/// Gestione Scheda Personalizzata (Custom Tab)
+bool isCustomTabEnabled();
+void setCustomTabEnabled(bool enable);
+bool isMetricInCustomTab(abarth::data::Metric m);
+void setMetricInCustomTab(abarth::data::Metric m, bool in_custom);
+uint32_t getCustomTabMask();
+void setCustomTabMask(uint32_t mask);
 
 /// Impostazioni Warmup e Protezione Motore
 void setOilWarmupEnabled(bool enable);

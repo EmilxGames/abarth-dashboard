@@ -1,4 +1,5 @@
 #include "ui/settings_tab.h"
+#include "ui/ui.h"
 
 #include <esp_log.h>
 #include <esp_system.h>
@@ -19,6 +20,7 @@
 #include "config/warmup_manager.h"
 #include "display/lvgl_v8_port.h"
 #include "obd/obd_manager.h"
+#include "can/can_manager.h"
 #include "wifi_manager.h"
 #include "obd/ble_stream.h"
 #include "storage/rtc_manager.h"
@@ -45,9 +47,16 @@ lv_obj_t* g_lbl_sysinfo          = nullptr;
 lv_obj_t* g_lbl_obd_status       = nullptr;
 lv_obj_t* g_lbl_wifi_status      = nullptr;
 lv_obj_t* g_lbl_ble_status       = nullptr;
+lv_obj_t* g_lbl_can1_diag        = nullptr;
+lv_obj_t* g_lbl_can2_diag        = nullptr;
 lv_obj_t* g_lbl_counters_info    = nullptr;
 lv_obj_t* g_lbl_rtc_info         = nullptr;
 lv_obj_t* g_lbl_rtc_time_display = nullptr;
+lv_obj_t* g_lbl_stat_device      = nullptr;
+lv_obj_t* g_lbl_stat_state       = nullptr;
+lv_obj_t* g_lbl_stat_ok          = nullptr;
+lv_obj_t* g_lbl_stat_err         = nullptr;
+lv_obj_t* g_lbl_stat_lasterr     = nullptr;
 lv_obj_t* g_lbl_rtc_date_display = nullptr;
 lv_obj_t* g_lbl_rtc_hour_val     = nullptr;
 lv_obj_t* g_lbl_rtc_min_val      = nullptr;
@@ -87,7 +96,7 @@ static const CategoryMeta g_categories[13] = {
     {LV_SYMBOL_SETTINGS, "Test & Simulazione",    "Simulatore dinamico giri, turbo e test touch",      0xEA580C},
     {LV_SYMBOL_LIST,     "Personalizza Manometri","Selezione parametri per quadranti e barre",         0x0D9488},
     {LV_SYMBOL_WARNING,  "Diagnostica ECU",       "Scansione codici errore DTC e cancellazione",       0xE11D48},
-    {LV_SYMBOL_POWER,    "Info Sistema",          "ESP32-P4 SoC, memoria, statistiche e riavvio",      0x4F46E5},
+    {LV_SYMBOL_POWER,    "Info Sistema & Stato",  "Stato OBD/ECU, ESP32-P4 SoC, diagnostica e riavvio", 0x4F46E5},
     {LV_SYMBOL_REFRESH,  "Data, Ora & RTC",       "Orologio hardware, regolazione orario e batteria",  0x0284C7},
     {LV_SYMBOL_SD_CARD,  "Memoria MicroSD",       "Storage locale, log telemetria, asset e test",      0x10B981},
     {LV_SYMBOL_BELL,     "Avvisi & Alert",        "Soglie allarmi, motore freddo e warmup termico",    0xCC3030},
@@ -598,6 +607,7 @@ static void style_dropdown(lv_obj_t* dd, lv_color_t border_col) {
         lv_obj_set_style_radius(list, 10, 0);
         lv_obj_set_style_text_color(list, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_font(list, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(list, &lv_font_montserrat_14, LV_PART_SELECTED);
     }
 }
 
@@ -621,6 +631,7 @@ static void style_compact_dropdown(lv_obj_t* dd, lv_color_t border_col) {
         lv_obj_set_style_radius(list, 8, 0);
         lv_obj_set_style_text_color(list, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_font(list, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(list, &lv_font_montserrat_12, LV_PART_SELECTED);
     }
 }
 
@@ -662,9 +673,59 @@ static void add_metric_toggle(lv_obj_t* parent, abarth::data::Metric m, const ch
         abarth::data::Metric target_m = static_cast<abarth::data::Metric>(metric_raw);
         bool enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
         abarth::settings::setMetricVisible(target_m, enabled);
+        abarth::ui::apply_metric_visibility();
     }, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)m);
 
     // 2) Descrizione Sottostante (se presente)
+    if (subtitle) {
+        lv_obj_t* sub = lv_label_create(row);
+        lv_label_set_text(sub, subtitle);
+        lv_obj_set_style_text_color(sub, lv_color_hex(0x9A9AA6), 0);
+        lv_obj_set_style_text_font(sub, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_pad_top(sub, 2, 0);
+    }
+}
+
+static void add_custom_metric_toggle(lv_obj_t* parent, abarth::data::Metric m, const char* title, const char* subtitle) {
+    lv_obj_t* row = lv_obj_create(parent);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_ver(row, 8, 0);
+    lv_obj_set_style_pad_hor(row, 4, 0);
+    lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(row, lv_color_hex(0x222234), 0);
+    lv_obj_set_style_border_width(row, 1, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
+
+    lv_obj_t* top_row = lv_obj_create(row);
+    lv_obj_remove_style_all(top_row);
+    lv_obj_set_width(top_row, LV_PCT(100));
+    lv_obj_set_height(top_row, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(top_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(top_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* lbl = lv_label_create(top_row);
+    lv_label_set_text(lbl, title);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_flex_grow(lbl, 1);
+
+    lv_obj_t* sw = lv_switch_create(top_row);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(0x00CC66), (lv_style_selector_t)((uint32_t)LV_PART_INDICATOR | (uint32_t)LV_STATE_CHECKED));
+    if (abarth::settings::isMetricInCustomTab(m)) {
+        lv_obj_add_state(sw, LV_STATE_CHECKED);
+    }
+
+    lv_obj_add_event_cb(sw, [](lv_event_t* e){
+        uintptr_t metric_raw = (uintptr_t)lv_event_get_user_data(e);
+        abarth::data::Metric target_m = static_cast<abarth::data::Metric>(metric_raw);
+        bool enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+        abarth::settings::setMetricInCustomTab(target_m, enabled);
+        abarth::ui::rebuild_custom_tab();
+    }, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)m);
+
     if (subtitle) {
         lv_obj_t* sub = lv_label_create(row);
         lv_label_set_text(sub, subtitle);
@@ -802,6 +863,8 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
     g_lbl_obd_status       = nullptr;
     g_lbl_wifi_status      = nullptr;
     g_lbl_ble_status       = nullptr;
+    g_lbl_can1_diag        = nullptr;
+    g_lbl_can2_diag        = nullptr;
     g_lbl_counters_info    = nullptr;
     g_lbl_rtc_info         = nullptr;
     g_lbl_rtc_time_display = nullptr;
@@ -811,14 +874,414 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
     g_lbl_rtc_day_val      = nullptr;
     g_lbl_rtc_month_val    = nullptr;
     g_lbl_rtc_year_val     = nullptr;
+    g_lbl_stat_device      = nullptr;
+    g_lbl_stat_state       = nullptr;
+    g_lbl_stat_ok          = nullptr;
+    g_lbl_stat_err         = nullptr;
+    g_lbl_stat_lasterr     = nullptr;
 
     const auto& s = settings::current();
 
     switch (cat_idx) {
-        // === 0: CONNETTIVIT & OBD ===
+        // === 0: CONNETTIVITA' & OBD ===
         case 0: {
-            // Card 1: Riconnessione Automatica & Stato OBD
-            lv_obj_t* c1 = make_card_group(g_content_panel, "Rete OBD-II", LV_SYMBOL_SETTINGS);
+            // Card 0: Modalita' di Collegamento Vettura (BLE, WiFi, CAN-Bus)
+            lv_obj_t* c_mode = make_card_group(g_content_panel, "Modalita' di Collegamento Vettura", LV_SYMBOL_SETTINGS);
+            make_sub_label(c_mode, "Seleziona come il display acquisisce la telemetria dall'Abarth:");
+
+            lv_obj_t* r_m_btns = lv_obj_create(c_mode);
+            lv_obj_set_width(r_m_btns, LV_PCT(100));
+            lv_obj_set_style_bg_opa(r_m_btns, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(r_m_btns, 0, 0);
+            lv_obj_set_style_pad_all(r_m_btns, 0, 0);
+            lv_obj_set_flex_flow(r_m_btns, LV_FLEX_FLOW_ROW_WRAP);
+            lv_obj_set_style_pad_gap(r_m_btns, 8, 0);
+
+            auto make_mode_btn = [&](const char* icon, const char* title, const char* subtitle, settings::ConnectionMode m) {
+                const bool is_active = (s.connection_mode == m);
+                lv_obj_t* btn = lv_btn_create(r_m_btns);
+                lv_obj_set_flex_grow(btn, 1);
+                lv_obj_set_style_min_width(btn, 180, 0);
+                lv_obj_set_height(btn, 54);
+                lv_obj_set_style_radius(btn, 8, 0);
+                lv_obj_set_style_border_width(btn, is_active ? 2 : 1, 0);
+                lv_obj_set_style_border_color(btn, is_active ? lv_color_hex(0xCC3030) : lv_color_hex(0x383848), 0);
+                lv_obj_set_style_bg_color(btn, is_active ? lv_color_hex(0x2E1618) : lv_color_hex(0x1C1C26), 0);
+                lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_COLUMN);
+                lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+                lv_obj_set_style_pad_all(btn, 6, 0);
+
+                lv_obj_t* l_t = lv_label_create(btn);
+                char tbuf[64];
+                snprintf(tbuf, sizeof(tbuf), "%s %s%s", icon, title, is_active ? " [ATTIVO]" : "");
+                lv_label_set_text(l_t, tbuf);
+                lv_obj_set_style_text_color(l_t, is_active ? lv_color_hex(0xFF4D4D) : lv_color_hex(0xFFFFFF), 0);
+                lv_obj_set_style_text_font(l_t, &lv_font_montserrat_14, 0);
+
+                lv_obj_t* l_s = lv_label_create(btn);
+                lv_label_set_text(l_s, subtitle);
+                lv_obj_set_style_text_color(l_s, lv_color_hex(0x8A8A96), 0);
+                lv_obj_set_style_text_font(l_s, &lv_font_montserrat_10, 0);
+
+                lv_obj_add_event_cb(btn, [](lv_event_t* e){
+                    uintptr_t m_val = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+                    settings::ConnectionMode target_m = static_cast<settings::ConnectionMode>(m_val);
+                    if (target_m == settings::current().connection_mode) return;
+                    settings::setConnectionMode(target_m);
+                    if (target_m == settings::ConnectionMode::DirectCan) {
+                        abarth::obd::obd().forgetDevice();
+                        abarth::can::can().start();
+                    } else if (target_m == settings::ConnectionMode::BleObd) {
+                        abarth::can::can().stop();
+                        abarth::obd::obd().connectBLE();
+                    } else if (target_m == settings::ConnectionMode::WifiObd) {
+                        abarth::can::can().stop();
+                        abarth::obd::obd().connectWiFi();
+                    }
+                    open_category(0, 0);
+                }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<uintptr_t>(m)));
+            };
+
+            make_mode_btn(LV_SYMBOL_BLUETOOTH, "Bluetooth LE", "Adattatore vLinker FD / ELM327", settings::ConnectionMode::BleObd);
+            make_mode_btn(LV_SYMBOL_WIFI, "WiFi Dongle", "Adattatore OBD Socket TCP/IP", settings::ConnectionMode::WifiObd);
+            make_mode_btn(LV_SYMBOL_DRIVE, "CAN-Bus Diretto", "WeAct ISOCANFD V1 (TWAI)", settings::ConnectionMode::DirectCan);
+
+            // Card 1: CAN-Bus Diretto Duale (ESP32-P4 + 2x WeAct ISOCANFD V1)
+            lv_obj_t* c_can = make_card_group(g_content_panel, "Dual CAN-Bus Diretto (ESP32-P4 + WeAct ISOCAN)", LV_SYMBOL_DRIVE);
+
+            lv_obj_t* can_info = lv_label_create(c_can);
+            lv_obj_set_style_text_font(can_info, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(can_info, lv_color_hex(0x00E5FF), 0);
+            lv_label_set_text(can_info,
+                "• Hardware: 2x Moduli WeAct Studio ISOCANFD V1 (CA-IS2062A isolamento 2.5 kV)\n"
+                "• Supporta la lettura e scrittura contemporanea su entrambe le reti CAN vettura\n"
+                "• I canali possono essere abilitati o disabilitati in modo totalmente indipendente.");
+
+            // ==================== SEZIONE CAN 1 (C-CAN) ====================
+            lv_obj_t* sec_can1 = lv_obj_create(c_can);
+            lv_obj_remove_style_all(sec_can1);
+            lv_obj_set_size(sec_can1, LV_PCT(100), LV_SIZE_CONTENT);
+            lv_obj_set_style_bg_color(sec_can1, lv_color_hex(0x181824), 0);
+            lv_obj_set_style_bg_opa(sec_can1, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(sec_can1, 8, 0);
+            lv_obj_set_style_pad_all(sec_can1, 10, 0);
+            lv_obj_set_flex_flow(sec_can1, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_style_pad_row(sec_can1, 8, 0);
+
+            // Row 1: Header + Switch CAN 1
+            lv_obj_t* r_can1_hdr = lv_obj_create(sec_can1);
+            lv_obj_set_width(r_can1_hdr, LV_PCT(100));
+            lv_obj_set_style_bg_opa(r_can1_hdr, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(r_can1_hdr, 0, 0);
+            lv_obj_set_style_pad_all(r_can1_hdr, 0, 0);
+            lv_obj_set_flex_flow(r_can1_hdr, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(r_can1_hdr, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+            lv_obj_t* l_c1_t = lv_label_create(r_can1_hdr);
+            lv_label_set_text(l_c1_t, "CAN 1: C-CAN Powertrain (Motore)");
+            lv_obj_set_style_text_color(l_c1_t, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_text_font(l_c1_t, &lv_font_montserrat_14, 0);
+
+            lv_obj_t* sw_can1 = lv_switch_create(r_can1_hdr);
+            lv_obj_set_style_bg_color(sw_can1, lv_color_hex(0x30CC60), (lv_style_selector_t)((uint32_t)LV_PART_INDICATOR | (uint32_t)LV_STATE_CHECKED));
+            if (s.can1_enabled) lv_obj_add_state(sw_can1, LV_STATE_CHECKED);
+            lv_obj_add_event_cb(sw_can1, [](lv_event_t* e){
+                lv_obj_t* target = lv_event_get_target(e);
+                bool en = lv_obj_has_state(target, LV_STATE_CHECKED);
+                settings::setCan1Enabled(en);
+                if (settings::current().connection_mode == settings::ConnectionMode::DirectCan) {
+                    if (en) abarth::can::can().startBus(0);
+                    else    abarth::can::can().stopBus(0);
+                }
+            }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+            // Row 2: Info pin + riavvia CAN 1
+            lv_obj_t* r_can1_ctrl = lv_obj_create(sec_can1);
+            lv_obj_set_width(r_can1_ctrl, LV_PCT(100));
+            lv_obj_set_style_bg_opa(r_can1_ctrl, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(r_can1_ctrl, 0, 0);
+            lv_obj_set_style_pad_all(r_can1_ctrl, 0, 0);
+            lv_obj_set_flex_flow(r_can1_ctrl, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(r_can1_ctrl, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+            lv_obj_t* l_c1_pin = lv_label_create(r_can1_ctrl);
+            char c1_pbuf[48];
+            snprintf(c1_pbuf, sizeof(c1_pbuf), "Pinout: TX GPIO %u | RX GPIO %u", s.can1_tx_pin, s.can1_rx_pin);
+            lv_label_set_text(l_c1_pin, c1_pbuf);
+            lv_obj_set_style_text_color(l_c1_pin, lv_color_hex(0x8A8A96), 0);
+            lv_obj_set_style_text_font(l_c1_pin, &lv_font_montserrat_12, 0);
+
+            lv_obj_t* btn_can1_rst = lv_btn_create(r_can1_ctrl);
+            lv_obj_set_height(btn_can1_rst, 32);
+            lv_obj_set_style_bg_color(btn_can1_rst, lv_color_hex(0x282838), 0);
+            lv_obj_set_style_radius(btn_can1_rst, 6, 0);
+            lv_obj_set_style_pad_hor(btn_can1_rst, 12, 0);
+            lv_obj_t* lbl_c1rst = lv_label_create(btn_can1_rst);
+            lv_label_set_text(lbl_c1rst, LV_SYMBOL_REFRESH " Riavvia C-CAN");
+            lv_obj_set_style_text_color(lbl_c1rst, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_text_font(lbl_c1rst, &lv_font_montserrat_12, 0);
+            lv_obj_center(lbl_c1rst);
+            lv_obj_add_event_cb(btn_can1_rst, [](lv_event_t*){
+                abarth::can::can().restartBus(0);
+            }, LV_EVENT_CLICKED, nullptr);
+
+            // Row 3: Titolo Velocita' C-CAN
+            lv_obj_t* lbl_c1_baud_title = lv_label_create(sec_can1);
+            lv_label_set_text(lbl_c1_baud_title, "Velocita' Bus C-CAN (Baud Rate):");
+            lv_obj_set_style_text_color(lbl_c1_baud_title, lv_color_hex(0xDEDEDE), 0);
+            lv_obj_set_style_text_font(lbl_c1_baud_title, &lv_font_montserrat_12, 0);
+
+            // Row 4: Pulsanti di Selezione Velocita' (Segmented Buttons - Crash-Free)
+            lv_obj_t* r_can1_baud = lv_obj_create(sec_can1);
+            lv_obj_set_width(r_can1_baud, LV_PCT(100));
+            lv_obj_set_style_bg_opa(r_can1_baud, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(r_can1_baud, 0, 0);
+            lv_obj_set_style_pad_all(r_can1_baud, 0, 0);
+            lv_obj_set_flex_flow(r_can1_baud, LV_FLEX_FLOW_ROW_WRAP);
+            lv_obj_set_style_pad_gap(r_can1_baud, 8, 0);
+
+            struct CanSpeedOpt {
+                const char* label;
+                uint32_t baud;
+            };
+
+            static const CanSpeedOpt c1_opts[] = {
+                { "500 kbps (Abarth)", 500000 },
+                { "250 kbps",          250000 },
+                { "1000 kbps (1M)",   1000000 }
+            };
+
+            for (const auto& opt : c1_opts) {
+                const bool is_sel = (s.can1_baud_rate == opt.baud);
+                lv_obj_t* b = lv_btn_create(r_can1_baud);
+                lv_obj_set_flex_grow(b, 1);
+                lv_obj_set_height(b, 36);
+                lv_obj_set_style_radius(b, 6, 0);
+                lv_obj_set_style_border_width(b, is_sel ? 2 : 1, 0);
+                lv_obj_set_style_border_color(b, is_sel ? lv_color_hex(0xCC3030) : lv_color_hex(0x383848), 0);
+                lv_obj_set_style_bg_color(b, is_sel ? lv_color_hex(0x3A181C) : lv_color_hex(0x1C1C26), 0);
+                lv_obj_set_style_pad_hor(b, 8, 0);
+                lv_obj_set_style_pad_ver(b, 4, 0);
+
+                lv_obj_t* l = lv_label_create(b);
+                lv_label_set_text(l, opt.label);
+                lv_obj_set_style_text_color(l, is_sel ? lv_color_hex(0xFF4D4D) : lv_color_hex(0x9E9EA8), 0);
+                lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+                lv_obj_center(l);
+
+                lv_obj_add_event_cb(b, [](lv_event_t* e){
+                    uint32_t chosen_baud = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+                    const auto& cur = settings::current();
+                    if (cur.can1_baud_rate == chosen_baud) return;
+                    settings::setCan1Config(cur.can1_tx_pin, cur.can1_rx_pin, chosen_baud);
+                    if (cur.connection_mode == settings::ConnectionMode::DirectCan && cur.can1_enabled) {
+                        abarth::can::can().restartBus(0);
+                    }
+                    open_category(0, 0);
+                }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<uintptr_t>(opt.baud)));
+            }
+
+            // Live Diagnostic Box CAN 1
+            g_lbl_can1_diag = lv_label_create(sec_can1);
+            lv_obj_add_event_cb(g_lbl_can1_diag, [](lv_event_t*) {
+                g_lbl_can1_diag = nullptr;
+            }, LV_EVENT_DELETE, nullptr);
+            lv_obj_set_style_text_font(g_lbl_can1_diag, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(g_lbl_can1_diag, lv_color_hex(0x30CC60), 0);
+            lv_label_set_text(g_lbl_can1_diag, "CAN 1: In attesa di avvio...");
+
+            // ==================== SEZIONE CAN 2 (B-CAN) ====================
+            lv_obj_t* sec_can2 = lv_obj_create(c_can);
+            lv_obj_remove_style_all(sec_can2);
+            lv_obj_set_size(sec_can2, LV_PCT(100), LV_SIZE_CONTENT);
+            lv_obj_set_style_bg_color(sec_can2, lv_color_hex(0x181824), 0);
+            lv_obj_set_style_bg_opa(sec_can2, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(sec_can2, 8, 0);
+            lv_obj_set_style_pad_all(sec_can2, 10, 0);
+            lv_obj_set_flex_flow(sec_can2, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_style_pad_row(sec_can2, 8, 0);
+
+            // Row 1: Header + Switch CAN 2
+            lv_obj_t* r_can2_hdr = lv_obj_create(sec_can2);
+            lv_obj_set_width(r_can2_hdr, LV_PCT(100));
+            lv_obj_set_style_bg_opa(r_can2_hdr, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(r_can2_hdr, 0, 0);
+            lv_obj_set_style_pad_all(r_can2_hdr, 0, 0);
+            lv_obj_set_flex_flow(r_can2_hdr, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(r_can2_hdr, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+            lv_obj_t* l_c2_t = lv_label_create(r_can2_hdr);
+            lv_label_set_text(l_c2_t, "CAN 2: B-CAN Carrozzeria (Body)");
+            lv_obj_set_style_text_color(l_c2_t, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_text_font(l_c2_t, &lv_font_montserrat_14, 0);
+
+            lv_obj_t* sw_can2 = lv_switch_create(r_can2_hdr);
+            lv_obj_set_style_bg_color(sw_can2, lv_color_hex(0x30CC60), (lv_style_selector_t)((uint32_t)LV_PART_INDICATOR | (uint32_t)LV_STATE_CHECKED));
+            if (s.can2_enabled) lv_obj_add_state(sw_can2, LV_STATE_CHECKED);
+            lv_obj_add_event_cb(sw_can2, [](lv_event_t* e){
+                lv_obj_t* target = lv_event_get_target(e);
+                bool en = lv_obj_has_state(target, LV_STATE_CHECKED);
+                settings::setCan2Enabled(en);
+                if (settings::current().connection_mode == settings::ConnectionMode::DirectCan) {
+                    if (en) abarth::can::can().startBus(1);
+                    else    abarth::can::can().stopBus(1);
+                }
+            }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+            // Row 2: Info pin + riavvia CAN 2
+            lv_obj_t* r_can2_ctrl = lv_obj_create(sec_can2);
+            lv_obj_set_width(r_can2_ctrl, LV_PCT(100));
+            lv_obj_set_style_bg_opa(r_can2_ctrl, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(r_can2_ctrl, 0, 0);
+            lv_obj_set_style_pad_all(r_can2_ctrl, 0, 0);
+            lv_obj_set_flex_flow(r_can2_ctrl, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(r_can2_ctrl, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+            lv_obj_t* l_c2_pin = lv_label_create(r_can2_ctrl);
+            char c2_pbuf[48];
+            snprintf(c2_pbuf, sizeof(c2_pbuf), "Pinout: TX GPIO %u | RX GPIO %u", s.can2_tx_pin, s.can2_rx_pin);
+            lv_label_set_text(l_c2_pin, c2_pbuf);
+            lv_obj_set_style_text_color(l_c2_pin, lv_color_hex(0x8A8A96), 0);
+            lv_obj_set_style_text_font(l_c2_pin, &lv_font_montserrat_12, 0);
+
+            lv_obj_t* btn_can2_rst = lv_btn_create(r_can2_ctrl);
+            lv_obj_set_height(btn_can2_rst, 32);
+            lv_obj_set_style_bg_color(btn_can2_rst, lv_color_hex(0x282838), 0);
+            lv_obj_set_style_radius(btn_can2_rst, 6, 0);
+            lv_obj_set_style_pad_hor(btn_can2_rst, 12, 0);
+            lv_obj_t* lbl_c2rst = lv_label_create(btn_can2_rst);
+            lv_label_set_text(lbl_c2rst, LV_SYMBOL_REFRESH " Riavvia B-CAN");
+            lv_obj_set_style_text_color(lbl_c2rst, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_text_font(lbl_c2rst, &lv_font_montserrat_12, 0);
+            lv_obj_center(lbl_c2rst);
+            lv_obj_add_event_cb(btn_can2_rst, [](lv_event_t*){
+                abarth::can::can().restartBus(1);
+            }, LV_EVENT_CLICKED, nullptr);
+
+            // Row 3: Titolo Velocita' B-CAN
+            lv_obj_t* lbl_c2_baud_title = lv_label_create(sec_can2);
+            lv_label_set_text(lbl_c2_baud_title, "Velocita' Bus B-CAN (Baud Rate):");
+            lv_obj_set_style_text_color(lbl_c2_baud_title, lv_color_hex(0xDEDEDE), 0);
+            lv_obj_set_style_text_font(lbl_c2_baud_title, &lv_font_montserrat_12, 0);
+
+            // Row 4: Pulsanti di Selezione Velocita' (Segmented Buttons - Crash-Free)
+            lv_obj_t* r_can2_baud = lv_obj_create(sec_can2);
+            lv_obj_set_width(r_can2_baud, LV_PCT(100));
+            lv_obj_set_style_bg_opa(r_can2_baud, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(r_can2_baud, 0, 0);
+            lv_obj_set_style_pad_all(r_can2_baud, 0, 0);
+            lv_obj_set_flex_flow(r_can2_baud, LV_FLEX_FLOW_ROW_WRAP);
+            lv_obj_set_style_pad_gap(r_can2_baud, 8, 0);
+
+            static const CanSpeedOpt c2_opts[] = {
+                { "50 kbps (Body)", 50000 },
+                { "125 kbps",      125000 },
+                { "250 kbps",      250000 },
+                { "500 kbps",      500000 }
+            };
+
+            for (const auto& opt : c2_opts) {
+                const bool is_sel = (s.can2_baud_rate == opt.baud);
+                lv_obj_t* b = lv_btn_create(r_can2_baud);
+                lv_obj_set_flex_grow(b, 1);
+                lv_obj_set_height(b, 36);
+                lv_obj_set_style_radius(b, 6, 0);
+                lv_obj_set_style_border_width(b, is_sel ? 2 : 1, 0);
+                lv_obj_set_style_border_color(b, is_sel ? lv_color_hex(0xCC3030) : lv_color_hex(0x383848), 0);
+                lv_obj_set_style_bg_color(b, is_sel ? lv_color_hex(0x3A181C) : lv_color_hex(0x1C1C26), 0);
+                lv_obj_set_style_pad_hor(b, 8, 0);
+                lv_obj_set_style_pad_ver(b, 4, 0);
+
+                lv_obj_t* l = lv_label_create(b);
+                lv_label_set_text(l, opt.label);
+                lv_obj_set_style_text_color(l, is_sel ? lv_color_hex(0xFF4D4D) : lv_color_hex(0x9E9EA8), 0);
+                lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+                lv_obj_center(l);
+
+                lv_obj_add_event_cb(b, [](lv_event_t* e){
+                    uint32_t chosen_baud = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+                    const auto& cur = settings::current();
+                    if (cur.can2_baud_rate == chosen_baud) return;
+                    settings::setCan2Config(cur.can2_tx_pin, cur.can2_rx_pin, chosen_baud);
+                    if (cur.connection_mode == settings::ConnectionMode::DirectCan && cur.can2_enabled) {
+                        abarth::can::can().restartBus(1);
+                    }
+                    open_category(0, 0);
+                }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<uintptr_t>(opt.baud)));
+            }
+
+            // Live Diagnostic Box CAN 2
+            g_lbl_can2_diag = lv_label_create(sec_can2);
+            lv_obj_add_event_cb(g_lbl_can2_diag, [](lv_event_t*) {
+                g_lbl_can2_diag = nullptr;
+            }, LV_EVENT_DELETE, nullptr);
+            lv_obj_set_style_text_font(g_lbl_can2_diag, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(g_lbl_can2_diag, lv_color_hex(0x30CC60), 0);
+            lv_label_set_text(g_lbl_can2_diag, "CAN 2: In attesa di avvio...");
+
+            // Switch Listen-Only Globale
+            lv_obj_t* r_lo = lv_obj_create(c_can);
+            lv_obj_set_width(r_lo, LV_PCT(100));
+            lv_obj_set_style_bg_opa(r_lo, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(r_lo, 0, 0);
+            lv_obj_set_style_pad_all(r_lo, 0, 0);
+            lv_obj_set_flex_flow(r_lo, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(r_lo, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+            lv_obj_t* lbl_lo = lv_label_create(r_lo);
+            lv_label_set_text(lbl_lo, "Sola Ricezione Passiva (Listen-Only)");
+            lv_obj_set_style_text_color(lbl_lo, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_text_font(lbl_lo, &lv_font_montserrat_14, 0);
+
+            lv_obj_t* sw_lo = lv_switch_create(r_lo);
+            lv_obj_set_style_bg_color(sw_lo, lv_color_hex(0xCC3030), (lv_style_selector_t)((uint32_t)LV_PART_INDICATOR | (uint32_t)LV_STATE_CHECKED));
+            if (s.can_listen_only) lv_obj_add_state(sw_lo, LV_STATE_CHECKED);
+            lv_obj_add_event_cb(sw_lo, [](lv_event_t* e){
+                lv_obj_t* target = lv_event_get_target(e);
+                bool lo = lv_obj_has_state(target, LV_STATE_CHECKED);
+                settings::setCanListenOnly(lo);
+                if (settings::current().connection_mode == settings::ConnectionMode::DirectCan) {
+                    abarth::can::can().restart();
+                }
+            }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+            // ==================== CARD SCHEMA DI COLLEGAMENTO ====================
+            lv_obj_t* c_wiring = make_card_group(g_content_panel, "Schema Collegamento Hardware (Pin-to-Pin)", LV_SYMBOL_FILE);
+
+            lv_obj_t* wiring_text = lv_label_create(c_wiring);
+            lv_obj_set_style_text_font(wiring_text, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(wiring_text, lv_color_hex(0xE0E0EE), 0);
+            lv_label_set_text(wiring_text,
+                "#FF4444 [!] ALIMENTAZIONE MODULI WEACT ISOCANFD V1:#\n"
+                "Ciascun modulo richiede ENTRAMBE le tensioni collegate:\n"
+                "• #FFD700 5V (VDDP):# Alimenta il convertitore DC-DC isolato interno (lato CAN).\n"
+                "  SENZA la 5V il lato bus isolato e' SPENTO e non riceve/trasmette nulla!\n"
+                "• #00E5FF 3V3 (VDDL):# Alimenta i buffer logici TX/RX di ESP32-P4.\n"
+                "• #AAAAAA GND:# Massa comune logica.\n"
+                "• #FFCC00 JUMPER 120R:# Lasciare APERTO su entrambi i moduli (terminazione gia' presente sull'auto).\n\n"
+                "#30CC60 --- MODULO 1: C-CAN Powertrain (Alta velocita' 500 kbps) ---#\n"
+                "• Pin 5V Display       --->  Pin 5V Modulo 1 (VDDP)\n"
+                "• Pin 3V3 Display      --->  Pin 3V3 Modulo 1 (VDDL)\n"
+                "• Pin GND Display      --->  Pin GND Modulo 1\n"
+                "• Pin GPIO 20 Display  --->  Pin TXD Modulo 1 (TWAI0 TX)\n"
+                "• Pin GPIO 21 Display  --->  Pin RXD Modulo 1 (TWAI0 RX)\n"
+                "• Pin CAN_H Modulo 1   --->  Presa OBD-II Auto Pin 6 (CAN-H Motore)\n"
+                "• Pin CAN_L Modulo 1   --->  Presa OBD-II Auto Pin 14 (CAN-L Motore)\n\n"
+                "#30CC60 --- MODULO 2: B-CAN Body (Bassa velocita' 50 kbps) ---#\n"
+                "• Pin 5V Display       --->  Pin 5V Modulo 2 (VDDP)\n"
+                "• Pin 3V3 Display      --->  Pin 3V3 Modulo 2 (VDDL)\n"
+                "• Pin GND Display      --->  Pin GND Modulo 2\n"
+                "• Pin GPIO 32 Display  --->  Pin TXD Modulo 2 (TWAI1 TX)\n"
+                "• Pin GPIO 33 Display  --->  Pin RXD Modulo 2 (TWAI1 RX)\n"
+                "• Pin CAN_H Modulo 2   --->  Presa OBD-II Auto Pin 1 (B-CAN-H Body)\n"
+                "• Pin CAN_L Modulo 2   --->  Presa OBD-II Auto Pin 9 (B-CAN-L Body)\n\n"
+                "#9A9AA6 --- PRESA DIAGNOSI OBD-II AUTO (Fiat 500 / Abarth 595) ---#\n"
+                "• Pin 4 / Pin 5: Massa Telaio Auto (GND)\n"
+                "• Pin 16: +12V Batteria Auto");
+            lv_label_set_recolor(wiring_text, true);
+
+            // Card 2: Riconnessione Automatica & Stato OBD (Dongle BLE / WiFi)
+            lv_obj_t* c1 = make_card_group(g_content_panel, "Rete OBD-II Dongle", LV_SYMBOL_SETTINGS);
             
             lv_obj_t* r_auto = lv_obj_create(c1);
             lv_obj_set_width(r_auto, LV_PCT(100));
@@ -1188,7 +1651,8 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             lv_obj_set_flex_flow(sub_bar, LV_FLEX_FLOW_ROW);
             lv_obj_set_flex_align(sub_bar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-            static const char* sub_labels[5] = {
+            static const char* sub_labels[6] = {
+                LV_SYMBOL_SHUFFLE " Custom",
                 LV_SYMBOL_POWER " Motore",
                 LV_SYMBOL_REFRESH " Temp.",
                 LV_SYMBOL_DRIVE " Press.",
@@ -1196,7 +1660,7 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                 LV_SYMBOL_CHARGE " Elettr."
             };
 
-            for (uint8_t i = 0; i < 5; ++i) {
+            for (uint8_t i = 0; i < 6; ++i) {
                 lv_obj_t* sbtn = lv_btn_create(sub_bar);
                 lv_obj_set_flex_grow(sbtn, 1);
                 lv_obj_set_height(sbtn, 38);
@@ -1222,10 +1686,73 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                 }, LV_EVENT_CLICKED, (void*)(uintptr_t)i);
             }
 
-            // Sottomenu 0: Motore & Prestazioni
+            // Sottomenu 0: Pannello Personalizzato (Custom Tab)
             if (g_subcat_metric == 0) {
-                lv_obj_t* c1 = make_card_group(g_content_panel, "Motore & Prestazioni", LV_SYMBOL_POWER);
-                make_sub_label(c1, "Attiva o disattiva gli indicatori della sezione Motore:");
+                lv_obj_t* c0 = make_card_group(g_content_panel, "Pannello Personalizzato (Custom)", LV_SYMBOL_SHUFFLE);
+                make_sub_label(c0, "Attiva o disattiva la scheda personalizzata e seleziona cosa visualizzare:");
+
+                // Master Toggle per la Scheda Custom sulla barra principale
+                lv_obj_t* row_m = lv_obj_create(c0);
+                lv_obj_remove_style_all(row_m);
+                lv_obj_set_width(row_m, LV_PCT(100));
+                lv_obj_set_height(row_m, LV_SIZE_CONTENT);
+                lv_obj_set_style_pad_ver(row_m, 8, 0);
+                lv_obj_set_style_pad_hor(row_m, 4, 0);
+                lv_obj_set_style_border_side(row_m, LV_BORDER_SIDE_BOTTOM, 0);
+                lv_obj_set_style_border_color(row_m, lv_color_hex(0x222234), 0);
+                lv_obj_set_style_border_width(row_m, 1, 0);
+                lv_obj_set_flex_flow(row_m, LV_FLEX_FLOW_ROW);
+                lv_obj_set_flex_align(row_m, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+                lv_obj_t* lbl_m = lv_label_create(row_m);
+                lv_label_set_text(lbl_m, "Abilita Scheda sulla Dashboard");
+                lv_obj_set_style_text_color(lbl_m, lv_color_hex(0xFFFFFF), 0);
+                lv_obj_set_style_text_font(lbl_m, &lv_font_montserrat_14, 0);
+                lv_obj_set_flex_grow(lbl_m, 1);
+
+                lv_obj_t* sw_m = lv_switch_create(row_m);
+                lv_obj_set_style_bg_color(sw_m, lv_color_hex(0x00CC66), (lv_style_selector_t)((uint32_t)LV_PART_INDICATOR | (uint32_t)LV_STATE_CHECKED));
+                if (abarth::settings::isCustomTabEnabled()) {
+                    lv_obj_add_state(sw_m, LV_STATE_CHECKED);
+                }
+                lv_obj_add_event_cb(sw_m, [](lv_event_t* e){
+                    bool en = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+                    abarth::settings::setCustomTabEnabled(en);
+                    abarth::ui::apply_metric_visibility();
+                }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+                lv_obj_t* c_mot = make_card_group(g_content_panel, "Parametri Motore Custom", LV_SYMBOL_POWER);
+                add_custom_metric_toggle(c_mot, Metric::Rpm, "Giri Motore (RPM)", "Visualizza contagiri con barra progressiva");
+                add_custom_metric_toggle(c_mot, Metric::Speed, "Velocita' Veicolo", "Tachimetro digitale km/h o mph");
+                add_custom_metric_toggle(c_mot, Metric::EngineLoad, "Carico Motore (%)", "Percentuale di sforzo del motore");
+                add_custom_metric_toggle(c_mot, Metric::Throttle, "Posizione Farfalla (%)", "Apertura corpo farfallato");
+                add_custom_metric_toggle(c_mot, Metric::Afr, "Rapporto Stechiometrico (AFR)", "Miscela aria/benzina sonda Lambda");
+                add_custom_metric_toggle(c_mot, Metric::DistanceSinceClear, "Km da Reset DTC", "Chilometri percorsi da azzeramento");
+
+                lv_obj_t* c_tmp = make_card_group(g_content_panel, "Temperature Custom", LV_SYMBOL_REFRESH);
+                add_custom_metric_toggle(c_tmp, Metric::OilTempC, "Temp. Olio Motore", "Temperatura circuito olio lubrificante");
+                add_custom_metric_toggle(c_tmp, Metric::CoolantTempC, "Temp. Liquido Raffreddamento", "Temperatura acqua radiatore");
+                add_custom_metric_toggle(c_tmp, Metric::IntakeAirTempC, "Temp. Aria Aspirata (IAT)", "Sensore intercooler / aspirazione");
+                add_custom_metric_toggle(c_tmp, Metric::EgtC, "Temp. Gas di Scarico (EGT)", "Temperatura a monte turbina");
+                add_custom_metric_toggle(c_tmp, Metric::AmbientTempC, "Temp. Esterna", "Sensore temperatura ambiente");
+
+                lv_obj_t* c_prs = make_card_group(g_content_panel, "Pressioni Custom", LV_SYMBOL_DRIVE);
+                add_custom_metric_toggle(c_prs, Metric::BoostRelBar, "Pressione Turbo (Boost)", "Manometro turbo relativo");
+                add_custom_metric_toggle(c_prs, Metric::BoostKpa, "Pressione Collettore (MAP)", "Pressione assoluta MAP");
+                add_custom_metric_toggle(c_prs, Metric::OilPressureBar, "Pressione Olio Motore", "Sensore pressione circuito lubrificazione");
+                add_custom_metric_toggle(c_prs, Metric::FuelPressureKpa, "Pressione Rail Carburante", "Sensore alta pressione benzina");
+
+                lv_obj_t* c_ele = make_card_group(g_content_panel, "Carburante & Impianto Elettrico Custom", LV_SYMBOL_CHARGE);
+                add_custom_metric_toggle(c_ele, Metric::BatteryVolts, "Tensione Batteria (Volts)", "Voltmetro alternatore e batteria");
+                add_custom_metric_toggle(c_ele, Metric::FuelLevelPct, "Livello Serbatoio (%)", "Percentuale carburante nel serbatoio");
+                add_custom_metric_toggle(c_ele, Metric::FuelConsumptionL100, "Consumo Istantaneo (L/100km)", "Consumo carburante calcolato");
+                add_custom_metric_toggle(c_ele, Metric::FuelRateLh, "Portata Carburante (L/h)", "Flusso iniettori in litri all'ora");
+                add_custom_metric_toggle(c_ele, Metric::EthanolPct, "Percentuale Etanolo (%)", "Sensore FlexFuel");
+            }
+            // Sottomenu 1: Motore & Prestazioni
+            else if (g_subcat_metric == 1) {
+                lv_obj_t* c1 = make_card_group(g_content_panel, "Motore & Prestazioni (Pannello Motore)", LV_SYMBOL_POWER);
+                make_sub_label(c1, "Attiva o disattiva gli indicatori della sezione Motore (lo spazio viene riadattato dinamicamente):");
                 add_metric_toggle(c1, Metric::Rpm, "Giri Motore (RPM)", "Visualizza contagiri principale");
                 add_metric_toggle(c1, Metric::Speed, "Velocita' Veicolo", "Visualizza tachimetro km/h o mph");
                 add_metric_toggle(c1, Metric::EngineLoad, "Carico Motore (%)", "Percentuale sforzo motore ECU");
@@ -1233,8 +1760,8 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                 add_metric_toggle(c1, Metric::Afr, "Rapporto Stechiometrico (AFR)", "Misura sonda Lambda O2");
                 add_metric_toggle(c1, Metric::DistanceSinceClear, "Km da Reset DTC", "Chilometri da azzeramento errori");
             }
-            // Sottomenu 1: Temperature
-            else if (g_subcat_metric == 1) {
+            // Sottomenu 2: Temperature
+            else if (g_subcat_metric == 2) {
                 lv_obj_t* c2 = make_card_group(g_content_panel, "Temperature Telemetria", LV_SYMBOL_REFRESH);
                 make_sub_label(c2, "Attiva o disattiva gli indicatori di Temperatura:");
                 add_metric_toggle(c2, Metric::CoolantTempC, "Temp. Liquido Refrigerante", "Temperatura acqua radiatore");
@@ -1243,16 +1770,16 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                 add_metric_toggle(c2, Metric::AmbientTempC, "Temp. Esterna", "Sensore temperatura ambiente");
                 add_metric_toggle(c2, Metric::EgtC, "Temp. Gas di Scarico (EGT)", "Sensore EGT turbina/collettore");
             }
-            // Sottomenu 2: Pressioni
-            else if (g_subcat_metric == 2) {
+            // Sottomenu 3: Pressioni
+            else if (g_subcat_metric == 3) {
                 lv_obj_t* c3 = make_card_group(g_content_panel, "Pressioni Telemetria", LV_SYMBOL_DRIVE);
                 make_sub_label(c3, "Attiva o disattiva i manometri di Pressione:");
                 add_metric_toggle(c3, Metric::BoostRelBar, "Pressione Turbo (Boost)", "Manometro pressione turbo relativa");
                 add_metric_toggle(c3, Metric::BoostKpa, "Pressione Collettore (MAP)", "Sensore MAP pressione assoluta");
                 add_metric_toggle(c3, Metric::OilPressureBar, "Pressione Olio Motore", "Sensore pressione circuito olio");
             }
-            // Sottomenu 3: Carburante & Consumi
-            else if (g_subcat_metric == 3) {
+            // Sottomenu 4: Carburante & Consumi
+            else if (g_subcat_metric == 4) {
                 lv_obj_t* c4 = make_card_group(g_content_panel, "Carburante & Consumi", LV_SYMBOL_BATTERY_FULL);
                 make_sub_label(c4, "Attiva o disattiva i dati Carburante:");
                 add_metric_toggle(c4, Metric::FuelLevelPct, "Livello Serbatoio (%)", "Percentuale carburante rimasto");
@@ -1263,8 +1790,8 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                 add_metric_toggle(c4, Metric::FuelInjectionTiming, "Anticipo Iniezione", "Angolo fasatura iniezione");
                 add_metric_toggle(c4, Metric::EthanolPct, "Percentuale Etanolo (%)", "Sensore FlexFuel E85/E10");
             }
-            // Sottomenu 4: Impianto Elettrico
-            else if (g_subcat_metric == 4) {
+            // Sottomenu 5: Impianto Elettrico
+            else if (g_subcat_metric == 5) {
                 lv_obj_t* c5 = make_card_group(g_content_panel, "Impianto Elettrico", LV_SYMBOL_CHARGE);
                 make_sub_label(c5, "Attiva o disattiva le misurazioni elettriche:");
                 add_metric_toggle(c5, Metric::BatteryVolts, "Tensione Batteria (Volts)", "Voltmetro alternatore e batteria");
@@ -1410,8 +1937,80 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             break;
         }
 
-        // === 8: INFO SISTEMA & ALIMENTAZIONE ===
+        // === 8: INFO SISTEMA & STATO ===
         case 8: {
+            // === STATO CONNESSIONE OBD & DIAGNOSTICA (Spostato dal vecchio pannello Stato) ===
+            lv_obj_t* c_stat = make_card_group(g_content_panel, "Stato Connessione Adattatore & ECU", LV_SYMBOL_WIFI);
+
+            g_lbl_stat_device = lv_label_create(c_stat);
+            lv_obj_set_style_text_font(g_lbl_stat_device, &lv_font_montserrat_16, 0);
+            lv_obj_set_style_text_color(g_lbl_stat_device, lv_color_hex(0xF8F8F8), 0);
+            lv_label_set_text(g_lbl_stat_device, "Dispositivo: In ricerca...");
+
+            lv_obj_t* st_hdr = lv_label_create(c_stat);
+            lv_obj_set_style_text_font(st_hdr, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(st_hdr, lv_color_hex(0x9A9AA6), 0);
+            lv_label_set_text(st_hdr, "Stato di Comunicazione OBD-II:");
+
+            g_lbl_stat_state = lv_label_create(c_stat);
+            lv_obj_set_style_text_font(g_lbl_stat_state, &lv_font_montserrat_22, 0);
+            lv_obj_set_style_text_color(g_lbl_stat_state, lv_color_hex(0x9A9AA6), 0);
+            lv_label_set_text(g_lbl_stat_state, "DISCONNESSO");
+
+            // Row interna per OK ed ERR
+            lv_obj_t* cnt_row = lv_obj_create(c_stat);
+            lv_obj_remove_style_all(cnt_row);
+            lv_obj_set_size(cnt_row, LV_PCT(100), LV_SIZE_CONTENT);
+            lv_obj_set_flex_flow(cnt_row, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(cnt_row, LV_FLEX_ALIGN_SPACE_AROUND, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+            lv_obj_set_style_pad_ver(cnt_row, 8, 0);
+
+            // Box OK
+            lv_obj_t* box_ok = lv_obj_create(cnt_row);
+            lv_obj_remove_style_all(box_ok);
+            lv_obj_set_flex_flow(box_ok, LV_FLEX_FLOW_COLUMN);
+            lv_obj_t* lbl_ok_t = lv_label_create(box_ok);
+            lv_obj_set_style_text_font(lbl_ok_t, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(lbl_ok_t, lv_color_hex(0x9A9AA6), 0);
+            lv_label_set_text(lbl_ok_t, "Letture OK");
+
+            g_lbl_stat_ok = lv_label_create(box_ok);
+            lv_obj_set_style_text_font(g_lbl_stat_ok, &lv_font_montserrat_24, 0);
+            lv_obj_set_style_text_color(g_lbl_stat_ok, lv_color_hex(0x30CC60), 0);
+            lv_label_set_text_fmt(g_lbl_stat_ok, "%lu", static_cast<unsigned long>(abarth::obd::obd().successfulReads()));
+
+            // Box ERR
+            lv_obj_t* box_err = lv_obj_create(cnt_row);
+            lv_obj_remove_style_all(box_err);
+            lv_obj_set_flex_flow(box_err, LV_FLEX_FLOW_COLUMN);
+            lv_obj_t* lbl_err_t = lv_label_create(box_err);
+            lv_obj_set_style_text_font(lbl_err_t, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(lbl_err_t, lv_color_hex(0x9A9AA6), 0);
+            lv_label_set_text(lbl_err_t, "Errori / Retry");
+
+            g_lbl_stat_err = lv_label_create(box_err);
+            lv_obj_set_style_text_font(g_lbl_stat_err, &lv_font_montserrat_24, 0);
+            lv_obj_set_style_text_color(g_lbl_stat_err, lv_color_hex(0xFF5252), 0);
+            lv_label_set_text_fmt(g_lbl_stat_err, "%lu", static_cast<unsigned long>(abarth::obd::obd().failedReads()));
+
+            g_lbl_stat_lasterr = lv_label_create(c_stat);
+            lv_obj_set_style_text_font(g_lbl_stat_lasterr, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(g_lbl_stat_lasterr, lv_color_hex(0x9A9AA6), 0);
+            lv_label_set_text(g_lbl_stat_lasterr, "Nessun errore rilevato");
+
+            // Card Guida
+            lv_obj_t* c_guide = make_card_group(g_content_panel, "Guida Monitoraggio Adattatore & ECU", LV_SYMBOL_FILE);
+            lv_obj_t* hint = lv_label_create(c_guide);
+            lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(hint, lv_color_hex(0xDEDEDE), 0);
+            lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(hint, LV_PCT(100));
+            lv_label_set_text(hint,
+                "• Disconnesso: Adattatore OBD non collegato o disattivato.\n"
+                "• Attesa...: Comunicazione avviata, dati PID in arrivo dall'auto.\n"
+                "• Non supportato: PID non risposto dalla centralina ECU Abarth.\n"
+                "• Supporto Dongle: Compatibile con dispositivi BLE (vLinker, OBDLink CX, ELM327) e WiFi.");
+
             // Hardware Info
             lv_obj_t* c1 = make_card_group(g_content_panel, "Informazioni Hardware & Firmware", LV_SYMBOL_SETTINGS);
 
@@ -3678,6 +4277,8 @@ void close_category() {
     g_lbl_obd_status       = nullptr;
     g_lbl_wifi_status      = nullptr;
     g_lbl_ble_status       = nullptr;
+    g_lbl_can1_diag        = nullptr;
+    g_lbl_can2_diag        = nullptr;
     g_lbl_counters_info    = nullptr;
     g_lbl_rtc_info         = nullptr;
     g_lbl_rtc_time_display = nullptr;
@@ -3687,6 +4288,11 @@ void close_category() {
     g_lbl_rtc_day_val      = nullptr;
     g_lbl_rtc_month_val    = nullptr;
     g_lbl_rtc_year_val     = nullptr;
+    g_lbl_stat_device      = nullptr;
+    g_lbl_stat_state       = nullptr;
+    g_lbl_stat_ok          = nullptr;
+    g_lbl_stat_err         = nullptr;
+    g_lbl_stat_lasterr     = nullptr;
 
     if (g_detail_page) {
         lv_obj_add_flag(g_detail_page, LV_OBJ_FLAG_HIDDEN);
@@ -4114,6 +4720,16 @@ void tick() {
 
     if ((now_ms - last_sysinfo_ms) >= 1000) {
         last_sysinfo_ms = now_ms;
+
+        // Aggiorna data e ora sul menu principale delle impostazioni
+        if (g_lbl_menu_time || g_lbl_menu_date) {
+            refresh_rtc_ui();
+        }
+
+        // Se la pagina di dettaglio e' chiusa o nascosta, i widget interni sono nulli
+        if (g_detail_page && lv_obj_has_flag(g_detail_page, LV_OBJ_FLAG_HIDDEN)) {
+            return;
+        }
         
         // 1. Sysinfo label
         if (g_lbl_sysinfo) {
@@ -4186,6 +4802,139 @@ void tick() {
             } else {
                 lv_label_set_text(g_lbl_ble_status, "BLE: Disconnesso");
                 lv_obj_set_style_text_color(g_lbl_ble_status, lv_color_hex(0xAAAAAA), 0);
+            }
+        }
+
+        // 6. Monitor Live Dual CAN-Bus Diretto
+        if (g_lbl_can1_diag) {
+            char buf[192];
+            snprintf(buf, sizeof(buf),
+                "Stato CAN 1 (C-CAN 500k): %s\n"
+                "RX: %lu frames (%.1f fps)  |  TX: %lu\n"
+                "Errori: %lu  |  %s",
+                abarth::can::canStateName(abarth::can::can().state(0)),
+                static_cast<unsigned long>(abarth::can::can().rxFrames(0)),
+                abarth::can::can().rxRateFps(0),
+                static_cast<unsigned long>(abarth::can::can().txFrames(0)),
+                static_cast<unsigned long>(abarth::can::can().busErrors(0)),
+                abarth::can::can().lastError(0).empty() ? "Nessun errore (OK)" : abarth::can::can().lastError(0).c_str());
+            lv_label_set_text(g_lbl_can1_diag, buf);
+        }
+
+        if (g_lbl_can2_diag) {
+            char buf[192];
+            snprintf(buf, sizeof(buf),
+                "Stato CAN 2 (B-CAN 50k): %s\n"
+                "RX: %lu frames (%.1f fps)  |  TX: %lu\n"
+                "Errori: %lu  |  %s",
+                abarth::can::canStateName(abarth::can::can().state(1)),
+                static_cast<unsigned long>(abarth::can::can().rxFrames(1)),
+                abarth::can::can().rxRateFps(1),
+                static_cast<unsigned long>(abarth::can::can().txFrames(1)),
+                static_cast<unsigned long>(abarth::can::can().busErrors(1)),
+                abarth::can::can().lastError(1).empty() ? "Nessun errore (OK)" : abarth::can::can().lastError(1).c_str());
+            lv_label_set_text(g_lbl_can2_diag, buf);
+        }
+
+        // 7. Stato Connessione & Diagnostica Vettura (Categoria 8 Info Sistema & Stato)
+        const auto& s = abarth::settings::current();
+        const bool is_can = (s.connection_mode == abarth::settings::ConnectionMode::DirectCan);
+
+        if (g_lbl_stat_device) {
+            std::string dev_str = "Dispositivo: ";
+            if (is_can) {
+                char cbuf[128];
+                snprintf(cbuf, sizeof(cbuf), "Dual CAN: C-CAN (G%u/%u @ %luk) | B-CAN (G%u/%u @ %luk)",
+                         s.can1_tx_pin, s.can1_rx_pin, static_cast<unsigned long>(s.can1_baud_rate / 1000),
+                         s.can2_tx_pin, s.can2_rx_pin, static_cast<unsigned long>(s.can2_baud_rate / 1000));
+                dev_str += cbuf;
+            } else if (!s.saved_dongle_mac.empty()) {
+                dev_str += "BLE (" + s.saved_dongle_mac + ")";
+            } else if (!s.saved_wifi_ssid.empty()) {
+                dev_str += "WiFi (" + s.saved_wifi_ssid + ")";
+            } else {
+                dev_str += "BLE / WiFi (Ricerca Automatica)";
+            }
+            lv_label_set_text(g_lbl_stat_device, dev_str.c_str());
+        }
+
+        if (g_lbl_stat_state) {
+            const bool is_demo = s.demo_mode;
+            lv_color_t color = lv_color_hex(0x9A9AA6);
+
+            if (is_demo) {
+                lv_label_set_text(g_lbl_stat_state, "[ SIMULAZIONE ATTIVA ]");
+                color = lv_color_hex(0xFFD700);
+            } else if (is_can) {
+                const auto c1_st = abarth::can::can().state(0);
+                const auto c2_st = abarth::can::can().state(1);
+                char s_buf[64];
+                if (c1_st == abarth::can::CanState::Running && c2_st == abarth::can::CanState::Running) {
+                    snprintf(s_buf, sizeof(s_buf), "DUAL CAN ATTIVO (OK)");
+                    color = lv_color_hex(0x30CC60);
+                } else if (c1_st == abarth::can::CanState::Running) {
+                    snprintf(s_buf, sizeof(s_buf), "C-CAN 500K ATTIVO (OK)");
+                    color = lv_color_hex(0x30CC60);
+                } else if (c2_st == abarth::can::CanState::Running) {
+                    snprintf(s_buf, sizeof(s_buf), "B-CAN 50K ATTIVO (OK)");
+                    color = lv_color_hex(0x30CC60);
+                } else if (c1_st == abarth::can::CanState::BusOff || c2_st == abarth::can::CanState::BusOff ||
+                           c1_st == abarth::can::CanState::Error || c2_st == abarth::can::CanState::Error) {
+                    snprintf(s_buf, sizeof(s_buf), "CAN BUS-OFF / ERRORE");
+                    color = lv_color_hex(0xFF5252);
+                } else {
+                    snprintf(s_buf, sizeof(s_buf), "CAN ARRESTATO");
+                    color = lv_color_hex(0x9A9AA6);
+                }
+                lv_label_set_text(g_lbl_stat_state, s_buf);
+            } else {
+                const auto st = abarth::obd::obd().state();
+                lv_label_set_text(g_lbl_stat_state, abarth::obd::stateName(st));
+                switch (st) {
+                    case abarth::obd::ObdState::Polling:
+                        color = lv_color_hex(0x30CC60);
+                        break;
+                    case abarth::obd::ObdState::Connecting:
+                    case abarth::obd::ObdState::Initializing:
+                    case abarth::obd::ObdState::Scanning:
+                        color = lv_color_hex(0xFFC107);
+                        break;
+                    case abarth::obd::ObdState::Error:
+                        color = lv_color_hex(0xFF5252);
+                        break;
+                    default:
+                        color = lv_color_hex(0x9A9AA6);
+                        break;
+                }
+            }
+            lv_obj_set_style_text_color(g_lbl_stat_state, color, 0);
+        }
+
+        if (g_lbl_stat_ok) {
+            const uint32_t ok_val = is_can ? abarth::can::can().totalRxFrames() : abarth::obd::obd().successfulReads();
+            lv_label_set_text_fmt(g_lbl_stat_ok, "%lu", static_cast<unsigned long>(ok_val));
+        }
+        if (g_lbl_stat_err) {
+            const uint32_t err_val = is_can ? abarth::can::can().totalErrors() : abarth::obd::obd().failedReads();
+            lv_label_set_text_fmt(g_lbl_stat_err, "%lu", static_cast<unsigned long>(err_val));
+        }
+        if (g_lbl_stat_lasterr) {
+            std::string err_str;
+            if (is_can) {
+                if (!abarth::can::can().lastError(0).empty()) {
+                    err_str = "CAN1: " + abarth::can::can().lastError(0);
+                } else if (!abarth::can::can().lastError(1).empty()) {
+                    err_str = "CAN2: " + abarth::can::can().lastError(1);
+                }
+            } else {
+                err_str = abarth::obd::obd().lastError();
+            }
+            if (!err_str.empty()) {
+                lv_label_set_text(g_lbl_stat_lasterr, err_str.c_str());
+                lv_obj_set_style_text_color(g_lbl_stat_lasterr, lv_color_hex(0xFF5252), 0);
+            } else {
+                lv_label_set_text(g_lbl_stat_lasterr, "Nessun errore rilevato");
+                lv_obj_set_style_text_color(g_lbl_stat_lasterr, lv_color_hex(0x9A9AA6), 0);
             }
         }
     }
