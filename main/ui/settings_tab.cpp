@@ -14,6 +14,11 @@
 #include <cstring>
 #include <vector>
 #include <string>
+#include <functional>
+#include <atomic>
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
 
 #include "config/alert_manager.h"
 #include "config/settings.h"
@@ -33,6 +38,67 @@
 namespace abarth::ui::settings_tab {
 
 namespace {
+
+// ===========================================================================
+// Esecuzione thread-safe (revisione A3/A8)
+// - post_to_ui: esegue fn nel task LVGL (lv_async_call sotto lock). Da usare
+//   per toccare la UI da callback WiFi/BLE o dal worker.
+// - run_in_worker: esegue lavoro lento (DTC, SD) fuori dal task LVGL.
+// - g_content_gen: cambia ogni volta che il pannello viene ricostruito, cosi'
+//   un risultato arrivato tardi non tocca oggetti gia' cancellati.
+// ===========================================================================
+uint32_t g_content_gen = 0;
+QueueHandle_t g_worker_q = nullptr;
+std::atomic<bool> g_worker_busy{false};
+
+void post_to_ui(std::function<void()> fn) {
+    auto* heap_fn = new std::function<void()>(std::move(fn));
+    if (lvgl_port_lock(-1)) {
+        lv_async_call([](void* p) {
+            auto* f = static_cast<std::function<void()>*>(p);
+            (*f)();
+            delete f;
+        }, heap_fn);
+        lvgl_port_unlock();
+    } else {
+        delete heap_fn;
+    }
+}
+
+void worker_task(void*) {
+    std::function<void()>* job = nullptr;
+    while (true) {
+        if (xQueueReceive(g_worker_q, &job, portMAX_DELAY) == pdTRUE && job) {
+            (*job)();
+            delete job;
+            g_worker_busy.store(false);
+        }
+    }
+}
+
+/// Ritorna false se c'e' gia' un'operazione in corso (doppio tocco).
+bool run_in_worker(std::function<void()> work) {
+    if (!g_worker_q) {
+        g_worker_q = xQueueCreate(4, sizeof(std::function<void()>*));
+        if (!g_worker_q) return false;
+        xTaskCreatePinnedToCore(worker_task, "ui_worker", 6144, nullptr, 2, nullptr, 0);
+    }
+    bool expected = false;
+    if (!g_worker_busy.compare_exchange_strong(expected, true)) return false;
+    auto* job = new std::function<void()>(std::move(work));
+    if (xQueueSend(g_worker_q, &job, 0) != pdTRUE) {
+        delete job;
+        g_worker_busy.store(false);
+        return false;
+    }
+    return true;
+}
+
+/// Libera la stringa strdup passata come user data quando il pulsante viene distrutto.
+void free_user_data_on_delete(lv_obj_t* obj, void* data) {
+    lv_obj_add_event_cb(obj, [](lv_event_t* e) { free(lv_event_get_user_data(e)); }, LV_EVENT_DELETE, data);
+}
+
 constexpr const char* TAG = "settings_ui";
 
 // Stili globali tab impostazioni
@@ -305,8 +371,9 @@ void wifi_connect_btn_cb(lv_event_t* e) {
     lv_obj_set_size(spinner, 60, 60);
     lv_obj_center(spinner);
 
-    abarth::wifi::WifiManager::instance().connect(ssid, pw.c_str(), [ssid_str = std::string(ssid)](bool ok, const std::string& ip, const std::string& gw_ip){
-        lvgl_port_lock(0);
+    abarth::wifi::WifiManager::instance().connect(ssid, pw.c_str(), [ssid_str = std::string(ssid)](bool ok, const std::string& ip_in, const std::string& gw_in){
+      // Chiamata dal task eventi WiFi: la UI si aggiorna nel task LVGL
+      post_to_ui([ssid_str, ok, ip = ip_in, gw_ip = gw_in]() {
         close_modal(nullptr);
         
         lv_obj_t* res_modal = create_modal("Risultato Connessione");
@@ -330,8 +397,7 @@ void wifi_connect_btn_cb(lv_event_t* e) {
         lv_label_set_text(lbl_ok, "OK");
         lv_obj_center(lbl_ok);
         lv_obj_add_event_cb(btn_ok, close_modal, LV_EVENT_CLICKED, nullptr);
-
-        lvgl_port_unlock();
+      });
     });
 }
 
@@ -381,6 +447,7 @@ void on_wifi_net_click(lv_event_t* e) {
     
     char* ssid_copy = strdup(ssid);
     lv_obj_add_event_cb(btn_conn, wifi_connect_btn_cb, LV_EVENT_CLICKED, ssid_copy);
+    free_user_data_on_delete(btn_conn, ssid_copy);
 }
 
 bool check_already_connected() {
@@ -414,8 +481,8 @@ void wifi_scan_cb(lv_event_t* /*e*/) {
     lv_obj_set_size(spinner, 50, 50);
     lv_obj_center(spinner);
 
-    abarth::wifi::WifiManager::instance().startScan([](const std::vector<abarth::wifi::WifiNetwork>& nets){
-        lvgl_port_lock(0);
+    abarth::wifi::WifiManager::instance().startScan([](const std::vector<abarth::wifi::WifiNetwork>& nets_in){
+      post_to_ui([nets = nets_in]() {
         g_scan_in_progress = false;
 
         if (g_modal_body) {
@@ -437,9 +504,10 @@ void wifi_scan_cb(lv_event_t* /*e*/) {
                 lv_obj_set_style_text_color(btn, lv_color_hex(0xFFFFFF), 0);
                 char* ssid_copy = strdup(net.ssid.c_str());
                 lv_obj_add_event_cb(btn, on_wifi_net_click, LV_EVENT_CLICKED, ssid_copy);
+                free_user_data_on_delete(btn, ssid_copy);
             }
         }
-        lvgl_port_unlock();
+      });
     });
 }
 
@@ -464,9 +532,9 @@ void ble_scan_cb(lv_event_t* /*e*/) {
     xTaskCreatePinnedToCore([](void* arg) {
         abarth::obd::BleStream temp_ble;
         temp_ble.begin({});
-        auto devs = temp_ble.scanDevices(5);
+        auto devs_found = temp_ble.scanDevices(5);
 
-        lvgl_port_lock(0);
+        post_to_ui([devs = std::move(devs_found)]() {
         g_scan_in_progress = false;
 
         if (g_modal_body) {
@@ -493,9 +561,10 @@ void ble_scan_cb(lv_event_t* /*e*/) {
                 lv_obj_set_style_text_color(btn, lv_color_hex(0xFFFFFF), 0);
                 char* mac_copy = strdup(mac.c_str());
                 lv_obj_add_event_cb(btn, on_ble_net_click, LV_EVENT_CLICKED, mac_copy);
+                free_user_data_on_delete(btn, mac_copy);
             }
         }
-        lvgl_port_unlock();
+        });
         vTaskDelete(nullptr);
     }, "ble_scan_th", 4096, nullptr, 1, nullptr, 1);
 }
@@ -521,7 +590,13 @@ void brightness_slider_cb(lv_event_t* e) {
     int32_t val = lv_slider_get_value(slider);
     if (val < 10) val = 10;
     if (val > 100) val = 100;
-    settings::setBrightness(static_cast<uint8_t>(val));
+    // Durante il trascinamento si applica solo il PWM; il salvataggio in NVS
+    // (scrittura flash) avviene una volta sola al rilascio.
+    if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
+        settings::setBrightness(static_cast<uint8_t>(val));
+    } else {
+        settings::previewBrightness(static_cast<uint8_t>(val));
+    }
     if (g_lbl_brightness_value) {
         char buf[8];
         std::snprintf(buf, sizeof(buf), "%ld%%", static_cast<long>(val));
@@ -858,6 +933,7 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
     if (!g_content_panel) return;
 
     // Pulisci il pannello di destra
+    ++g_content_gen;
     lv_obj_clean(g_content_panel);
     g_lbl_brightness_value = nullptr;
     g_lbl_sysinfo          = nullptr;
@@ -1475,6 +1551,7 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             lv_obj_set_style_bg_color(slider, lv_color_hex(0x2A2A3A), LV_PART_MAIN);
             lv_obj_set_style_bg_color(slider, lv_color_hex(0xCC3030), LV_PART_INDICATOR);
             lv_obj_add_event_cb(slider, brightness_slider_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+            lv_obj_add_event_cb(slider, brightness_slider_cb, LV_EVENT_RELEASED, nullptr);
 
             g_lbl_brightness_value = lv_label_create(r_bright);
             lv_obj_set_style_text_color(g_lbl_brightness_value, lv_color_hex(0xFFFFFF), 0);
@@ -1832,12 +1909,20 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             lv_obj_set_style_text_font(status_lbl, &lv_font_montserrat_14, 0);
 
             lv_obj_add_event_cb(btn_scan, [](lv_event_t* e){
-                lv_obj_t* res_box = (lv_obj_t*)lv_event_get_user_data(e);
+                lv_obj_t* res_box_ev = (lv_obj_t*)lv_event_get_user_data(e);
+                const uint32_t gen = g_content_gen;
+                // La lettura dura secondi: si fa nel worker, il risultato torna alla UI
+                const bool started = run_in_worker([res_box_ev, gen]() {
+                    std::vector<obd::DtcItem> codes_rd;
+                    std::string msg_rd;
+                    const bool ok_rd = obd::obd().readDtcCodes(codes_rd, msg_rd);
+                    post_to_ui([res_box_ev, gen, ok_rd, codes_rd = std::move(codes_rd), msg_rd = std::move(msg_rd)]() {
+                if (gen != g_content_gen) return;  // pannello ricostruito nel frattempo
+                lv_obj_t* res_box = res_box_ev;
+                const bool ok = ok_rd;
+                const auto& codes = codes_rd;
+                const std::string& status_msg = msg_rd;
                 lv_obj_clean(res_box);
-
-                std::vector<obd::DtcItem> codes;
-                std::string status_msg;
-                bool ok = obd::obd().readDtcCodes(codes, status_msg);
 
                 lv_obj_t* st_lbl = lv_label_create(res_box);
                 lv_label_set_text(st_lbl, status_msg.c_str());
@@ -1867,6 +1952,15 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                     lv_label_set_text(desc_lbl, dtc.description.c_str());
                     lv_obj_set_style_text_color(desc_lbl, lv_color_hex(0xDEDEDE), 0);
                     lv_obj_set_style_text_font(desc_lbl, &lv_font_montserrat_14, 0);
+                }
+                    });
+                });
+                if (started) {
+                    lv_obj_clean(res_box_ev);
+                    lv_obj_t* wait_lbl = lv_label_create(res_box_ev);
+                    lv_label_set_text(wait_lbl, "Lettura errori in corso...");
+                    lv_obj_set_style_text_color(wait_lbl, lv_color_hex(0x9A9AA6), 0);
+                    lv_obj_set_style_text_font(wait_lbl, &lv_font_montserrat_14, 0);
                 }
             }, LV_EVENT_CLICKED, res_cont);
 
@@ -1973,8 +2067,11 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
 
                     lv_obj_add_event_cb(b_yes, [](lv_event_t* e){
                         close_modal();
-                        std::string status_msg;
-                        obd::obd().clearDtcCodes(status_msg);  // ricontrolla RPM/velocita'
+                        create_modal("Cancellazione in corso...");
+                        const bool started = run_in_worker([]() {
+                        std::string status_msg_w;
+                        obd::obd().clearDtcCodes(status_msg_w);  // ricontrolla RPM/velocita'
+                        post_to_ui([status_msg = std::move(status_msg_w)]() {
                         create_modal("Esito Cancellazione");
                         lv_obj_t* res = lv_label_create(g_modal_body);
                         lv_label_set_text(res, status_msg.c_str());
@@ -1989,6 +2086,9 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                         lv_label_set_text(l_cl, "Chiudi");
                         lv_obj_center(l_cl);
                         lv_obj_add_event_cb(btn_close, close_modal, LV_EVENT_CLICKED, nullptr);
+                        });
+                        });
+                        if (!started) close_modal();
                     }, LV_EVENT_CLICKED, nullptr);
                 }, LV_EVENT_CLICKED, nullptr);
             }, LV_EVENT_CLICKED, nullptr);
@@ -2889,8 +2989,11 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                 lv_obj_set_style_text_font(l_rm, &lv_font_montserrat_14, 0);
                 lv_obj_center(l_rm);
                 lv_obj_add_event_cb(btn_remount_nosd, [](lv_event_t*) {
-                    abarth::storage::sd().remount();
-                    render_category(g_current_cat, 0);
+                    const uint32_t gen = g_content_gen;
+                    run_in_worker([gen]() {
+                        abarth::storage::sd().remount();
+                        post_to_ui([gen]() { if (gen == g_content_gen) render_category(g_current_cat, 0); });
+                    });
                 }, LV_EVENT_CLICKED, nullptr);
             }
 
@@ -3100,12 +3203,16 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             lv_obj_center(l_bb);
 
             lv_obj_add_event_cb(btn_bench, [](lv_event_t* e) {
-                lv_obj_t* target_lbl = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
-                lv_label_set_text(target_lbl, "Esecuzione benchmark in corso (512 KB)...");
-                lv_refr_now(nullptr);
-
-                float w_speed = 0.0f, r_speed = 0.0f;
-                bool ok = abarth::storage::sd().runBenchmark(&w_speed, &r_speed);
+                lv_obj_t* target_lbl_ev = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+                const uint32_t gen = g_content_gen;
+                const bool started = run_in_worker([target_lbl_ev, gen]() {
+                float w_speed_w = 0.0f, r_speed_w = 0.0f;
+                const bool ok_w = abarth::storage::sd().runBenchmark(&w_speed_w, &r_speed_w);
+                post_to_ui([target_lbl_ev, gen, ok_w, w_speed_w, r_speed_w]() {
+                if (gen != g_content_gen) return;
+                lv_obj_t* target_lbl = target_lbl_ev;
+                const bool ok = ok_w;
+                const float w_speed = w_speed_w, r_speed = r_speed_w;
                 if (ok) {
                     char res_buf[96];
                     std::snprintf(res_buf, sizeof(res_buf),
@@ -3117,6 +3224,9 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                     lv_label_set_text(target_lbl, LV_SYMBOL_WARNING " Errore durante il benchmark!");
                     lv_obj_set_style_text_color(target_lbl, lv_color_hex(0xEF4444), 0);
                 }
+                });
+                });
+                if (started) lv_label_set_text(target_lbl_ev, "Esecuzione benchmark in corso (512 KB)...");
             }, LV_EVENT_CLICKED, lbl_bench);
 
             lv_obj_t* btn_remount = lv_btn_create(row_b_btns);
@@ -3129,8 +3239,11 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             lv_obj_set_style_text_font(l_rm, &lv_font_montserrat_14, 0);
             lv_obj_center(l_rm);
             lv_obj_add_event_cb(btn_remount, [](lv_event_t*) {
-                abarth::storage::sd().remount();
-                render_category(g_current_cat, 0);
+                const uint32_t gen = g_content_gen;
+                run_in_worker([gen]() {
+                    abarth::storage::sd().remount();
+                    post_to_ui([gen]() { if (gen == g_content_gen) render_category(g_current_cat, 0); });
+                });
             }, LV_EVENT_CLICKED, nullptr);
 
             // Card 5: Centro Controllo Web & Download Telemetria
@@ -4327,6 +4440,7 @@ void open_category(uint8_t cat_idx, uint16_t subtab_idx) {
 }
 
 void close_category() {
+    ++g_content_gen;
     if (g_content_panel) {
         lv_obj_clean(g_content_panel);
     }
