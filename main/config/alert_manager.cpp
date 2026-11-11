@@ -25,6 +25,24 @@ uint32_t g_total_ticks = 0;
 lv_obj_t* g_bar_indicator = nullptr;
 lv_obj_t* g_timer_lbl = nullptr;
 
+/// Contenitore NON modale per gli avvisi (revisione M7): banner in alto,
+/// trasparente e non cliccabile, cosi' i gauge restano visibili e usabili.
+/// La card dell'avviso dentro resta toccabile per chiuderla.
+lv_obj_t* make_alert_banner_host() {
+    lv_obj_t* host = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(host);
+    lv_obj_set_width(host, LV_PCT(100));
+    lv_obj_set_height(host, LV_SIZE_CONTENT);
+    lv_obj_align(host, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_opa(host, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_top(host, 8, 0);
+    lv_obj_set_flex_flow(host, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(host, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_remove_flag(host, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(host, LV_OBJ_FLAG_SCROLLABLE);
+    return host;
+}
+
 void close_alert_popup() {
     if (!lvgl_port_lock(-1)) return;
     if (g_auto_close_timer) {
@@ -342,6 +360,9 @@ void AlertManager::setRuleAutoClose(AlertType type, uint8_t sec) {
 
 void AlertManager::checkAlerts() {
     const uint64_t now_ms = esp_timer_get_time() / 1000ULL;
+    // Solo valori aggiornati negli ultimi 2 s: se la connessione cade un valore
+    // vecchio non deve tenere attivo (o far scattare) un allarme.
+    constexpr uint32_t kAlertMaxAgeMs = 2000;
     auto& ds = abarth::data::store();
 
     const auto s_rpm = ds.get(abarth::data::Metric::Rpm);
@@ -365,7 +386,7 @@ void AlertManager::checkAlerts() {
             case AlertType::ColdEngineRpm: {
                 v1 = s_rpm.value;
                 v2 = s_coolant.value;
-                if (s_coolant.valid() && s_rpm.valid()) {
+                if (s_coolant.fresh(kAlertMaxAgeMs, static_cast<int64_t>(now_ms)) && s_rpm.fresh(kAlertMaxAgeMs, static_cast<int64_t>(now_ms))) {
                     if (v2 < r.threshold2 && v1 > r.threshold1) {
                         triggered = true;
                     }
@@ -374,14 +395,14 @@ void AlertManager::checkAlerts() {
             }
             case AlertType::HighCoolantTemp: {
                 v1 = s_coolant.value;
-                if (s_coolant.valid() && v1 > r.threshold1) {
+                if (s_coolant.fresh(kAlertMaxAgeMs, static_cast<int64_t>(now_ms)) && v1 > r.threshold1) {
                     triggered = true;
                 }
                 break;
             }
             case AlertType::HighOilTemp: {
                 v1 = s_oil_temp.value;
-                if (s_oil_temp.valid() && v1 > r.threshold1) {
+                if (s_oil_temp.fresh(kAlertMaxAgeMs, static_cast<int64_t>(now_ms)) && v1 > r.threshold1) {
                     triggered = true;
                 }
                 break;
@@ -392,14 +413,14 @@ void AlertManager::checkAlerts() {
                     boost_bar = (s_boost_kpa.value - 101.3f) / 100.0f;
                 }
                 v1 = boost_bar;
-                if (s_boost_kpa.valid() && v1 > r.threshold1) {
+                if (s_boost_kpa.fresh(kAlertMaxAgeMs, static_cast<int64_t>(now_ms)) && v1 > r.threshold1) {
                     triggered = true;
                 }
                 break;
             }
             case AlertType::LowBatteryVoltage: {
                 v1 = s_battery.value;
-                if (s_battery.valid() && v1 > 5.0f && v1 < r.threshold1) {
+                if (s_battery.fresh(kAlertMaxAgeMs, static_cast<int64_t>(now_ms)) && v1 > 5.0f && v1 < r.threshold1) {
                     triggered = true;
                 }
                 break;
@@ -422,7 +443,7 @@ void AlertManager::checkAlerts() {
         }
 
         auto s = ds.get(cr.metric);
-        if (!s.valid()) continue;
+        if (!s.fresh(kAlertMaxAgeMs, static_cast<int64_t>(now_ms))) continue;
 
         bool trig = false;
         if (cr.op == AlertOp::GreaterThan && s.value > cr.threshold) trig = true;
@@ -446,11 +467,7 @@ void AlertManager::triggerAlertPopup(const AlertRule& rule, float val1, float va
     }
 
     /* Backdrop oscurato sul top layer LVGL */
-    g_alert_modal = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(g_alert_modal);
-    lv_obj_set_size(g_alert_modal, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(g_alert_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(g_alert_modal, LV_OPA_70, 0);
+    g_alert_modal = make_alert_banner_host();
 
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
     const int popup_w = is_portrait ? 520 : 560;
@@ -607,11 +624,7 @@ void AlertManager::triggerCustomAlertPopup(const CustomAlertRule& rule, float va
         close_alert_popup();
     }
 
-    g_alert_modal = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(g_alert_modal);
-    lv_obj_set_size(g_alert_modal, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(g_alert_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(g_alert_modal, LV_OPA_70, 0);
+    g_alert_modal = make_alert_banner_host();
 
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
     const int popup_w = is_portrait ? 520 : 560;
@@ -738,11 +751,7 @@ void AlertManager::triggerColdEngineWarmupAlert(float rpm, float water_temp, uin
         close_alert_popup();
     }
 
-    g_alert_modal = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(g_alert_modal);
-    lv_obj_set_size(g_alert_modal, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(g_alert_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(g_alert_modal, LV_OPA_70, 0);
+    g_alert_modal = make_alert_banner_host();
 
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
     const int popup_w = is_portrait ? 520 : 560;
@@ -871,11 +880,7 @@ void AlertManager::triggerWarmupCompleteAlert(bool is_test) {
         close_alert_popup();
     }
 
-    g_alert_modal = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(g_alert_modal);
-    lv_obj_set_size(g_alert_modal, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(g_alert_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(g_alert_modal, LV_OPA_70, 0);
+    g_alert_modal = make_alert_banner_host();
 
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
     const int popup_w = is_portrait ? 520 : 560;
