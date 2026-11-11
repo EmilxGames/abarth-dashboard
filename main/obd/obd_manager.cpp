@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include "config/app_config.h"
 #include "config/settings.h"
 #include "data/data_store.h"
@@ -667,10 +668,37 @@ bool ObdManager::readDtcCodes(std::vector<DtcItem>& out_codes, std::string& out_
     return true;
 }
 
+bool ObdManager::dtcClearAllowed(std::string& out_reason) const {
+    if (abarth::settings::current().demo_mode) return true;
+    if (state() != ObdState::Polling) {
+        out_reason = "Cancellazione non disponibile: la centralina non e' collegata via OBD.";
+        return false;
+    }
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+    const data::Sample rpm = data::store().get(data::Metric::Rpm);
+    const data::Sample spd = data::store().get(data::Metric::Speed);
+    if (!rpm.fresh(2000, now_ms) || !spd.fresh(2000, now_ms)) {
+        out_reason = "Cancellazione bloccata: giri motore e velocita' non sono aggiornati.\n"
+                     "Attendi qualche secondo con il quadro acceso e riprova.";
+        return false;
+    }
+    if (rpm.value >= 1.0f || spd.value >= 0.5f) {
+        out_reason = "Cancellazione bloccata per sicurezza: serve il motore SPENTO (0 giri)\n"
+                     "e l'auto FERMA, con il quadro acceso.";
+        return false;
+    }
+    return true;
+}
+
 bool ObdManager::clearDtcCodes(std::string& out_status_msg) {
     if (abarth::settings::current().demo_mode) {
         out_status_msg = "Simulazione: Codici errore ed indicatore MIL azzerati con successo!";
         return true;
+    }
+
+    if (!dtcClearAllowed(out_status_msg)) {
+        ESP_LOGW(TAG, "Mode 04 rifiutato: %s", out_status_msg.c_str());
+        return false;
     }
 
     if (!active_stream_ || !active_stream_->isConnected()) {

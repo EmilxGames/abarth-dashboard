@@ -1887,7 +1887,25 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             lv_obj_center(lbl_clear);
 
             lv_obj_add_event_cb(btn_clear, [](lv_event_t* e){
-                create_modal("Conferma Cancellazione Errori");
+                // Controllo preventivo: motore spento e auto ferma (dati freschi)
+                std::string why;
+                if (!obd::obd().dtcClearAllowed(why)) {
+                    create_modal("Cancellazione Non Consentita");
+                    lv_obj_t* m = lv_label_create(g_modal_body);
+                    lv_label_set_text(m, why.c_str());
+                    lv_obj_set_style_text_color(m, lv_color_hex(0xFFFFFF), 0);
+                    lv_obj_set_style_text_font(m, &lv_font_montserrat_14, 0);
+                    lv_obj_t* b = lv_btn_create(g_modal_body);
+                    lv_obj_set_size(b, 140, 40);
+                    lv_obj_t* l = lv_label_create(b);
+                    lv_label_set_text(l, "Chiudi");
+                    lv_obj_center(l);
+                    lv_obj_add_event_cb(b, close_modal, LV_EVENT_CLICKED, nullptr);
+                    return;
+                }
+
+                // Primo passaggio
+                create_modal("Conferma Cancellazione Errori (1/2)");
                 lv_obj_t* msg = lv_label_create(g_modal_body);
                 lv_label_set_text(msg, "Sei sicuro di voler azzerare la memoria errori della centralina?\n\nQuesta operazione spegnera' la spia Check Engine (MIL).");
                 lv_obj_set_style_text_color(msg, lv_color_hex(0xFFFFFF), 0);
@@ -1912,27 +1930,66 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                 lv_obj_set_size(btn_ok, 160, 42);
                 lv_obj_set_style_bg_color(btn_ok, lv_color_hex(0xCC0000), 0);
                 lv_obj_t* l_ok = lv_label_create(btn_ok);
-                lv_label_set_text(l_ok, "Conferma");
+                lv_label_set_text(l_ok, "Continua");
                 lv_obj_center(l_ok);
 
                 lv_obj_add_event_cb(btn_ok, [](lv_event_t* e){
                     close_modal();
-                    std::string status_msg;
-                    obd::obd().clearDtcCodes(status_msg);
-                    create_modal("Esito Cancellazione");
-                    lv_obj_t* res = lv_label_create(g_modal_body);
-                    lv_label_set_text(res, status_msg.c_str());
-                    lv_obj_set_style_text_color(res, lv_color_hex(0xFFFFFF), 0);
-                    lv_obj_set_style_text_font(res, &lv_font_montserrat_14, 0);
+                    // Secondo passaggio: spiega cosa viene perso
+                    create_modal("Conferma Definitiva (2/2)");
+                    lv_obj_t* msg2 = lv_label_create(g_modal_body);
+                    lv_label_set_text(msg2,
+                        "ATTENZIONE: verranno cancellati anche i dati di freeze frame\n"
+                        "e azzerati i monitor di prontezza (readiness).\n"
+                        "Finche' non si completano di nuovo guidando, la revisione\n"
+                        "puo' non essere superata. Procedere?");
+                    lv_label_set_long_mode(msg2, LV_LABEL_LONG_WRAP);
+                    lv_obj_set_width(msg2, LV_PCT(100));
+                    lv_obj_set_style_text_color(msg2, lv_color_hex(0xFFCC00), 0);
+                    lv_obj_set_style_text_font(msg2, &lv_font_montserrat_14, 0);
 
-                    lv_obj_t* btn_close = lv_btn_create(g_modal_body);
-                    lv_obj_set_size(btn_close, 140, 40);
-                    lv_obj_set_style_bg_color(btn_close, lv_color_hex(0x00CC66), 0);
-                    lv_obj_set_style_pad_top(btn_close, 14, 0);
-                    lv_obj_t* l_cl = lv_label_create(btn_close);
-                    lv_label_set_text(l_cl, "Chiudi");
-                    lv_obj_center(l_cl);
-                    lv_obj_add_event_cb(btn_close, close_modal, LV_EVENT_CLICKED, nullptr);
+                    lv_obj_t* row2 = lv_obj_create(g_modal_body);
+                    lv_obj_remove_style_all(row2);
+                    lv_obj_set_width(row2, LV_PCT(100));
+                    lv_obj_set_height(row2, LV_SIZE_CONTENT);
+                    lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW);
+                    lv_obj_set_flex_align(row2, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+                    lv_obj_set_style_pad_top(row2, 16, 0);
+
+                    lv_obj_t* b_no = lv_btn_create(row2);
+                    lv_obj_set_size(b_no, 160, 42);
+                    lv_obj_set_style_bg_color(b_no, lv_color_hex(0x444454), 0);
+                    lv_obj_t* l_no = lv_label_create(b_no);
+                    lv_label_set_text(l_no, "Annulla");
+                    lv_obj_center(l_no);
+                    lv_obj_add_event_cb(b_no, close_modal, LV_EVENT_CLICKED, nullptr);
+
+                    lv_obj_t* b_yes = lv_btn_create(row2);
+                    lv_obj_set_size(b_yes, 160, 42);
+                    lv_obj_set_style_bg_color(b_yes, lv_color_hex(0xCC0000), 0);
+                    lv_obj_t* l_yes = lv_label_create(b_yes);
+                    lv_label_set_text(l_yes, "Cancella ora");
+                    lv_obj_center(l_yes);
+
+                    lv_obj_add_event_cb(b_yes, [](lv_event_t* e){
+                        close_modal();
+                        std::string status_msg;
+                        obd::obd().clearDtcCodes(status_msg);  // ricontrolla RPM/velocita'
+                        create_modal("Esito Cancellazione");
+                        lv_obj_t* res = lv_label_create(g_modal_body);
+                        lv_label_set_text(res, status_msg.c_str());
+                        lv_obj_set_style_text_color(res, lv_color_hex(0xFFFFFF), 0);
+                        lv_obj_set_style_text_font(res, &lv_font_montserrat_14, 0);
+
+                        lv_obj_t* btn_close = lv_btn_create(g_modal_body);
+                        lv_obj_set_size(btn_close, 140, 40);
+                        lv_obj_set_style_bg_color(btn_close, lv_color_hex(0x00CC66), 0);
+                        lv_obj_set_style_pad_top(btn_close, 14, 0);
+                        lv_obj_t* l_cl = lv_label_create(btn_close);
+                        lv_label_set_text(l_cl, "Chiudi");
+                        lv_obj_center(l_cl);
+                        lv_obj_add_event_cb(btn_close, close_modal, LV_EVENT_CLICKED, nullptr);
+                    }, LV_EVENT_CLICKED, nullptr);
                 }, LV_EVENT_CLICKED, nullptr);
             }, LV_EVENT_CLICKED, nullptr);
             break;

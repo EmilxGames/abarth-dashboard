@@ -68,7 +68,12 @@ public:
     bool readDtcCodes(std::vector<DtcItem>& out_codes, std::string& out_status_msg);
 
     /// Cancella i codici errore (DTC Mode 04) dalla centralina e resetta la spia MIL.
+    /// Rifiuta l'operazione se dtcClearAllowed() e' false.
     bool clearDtcCodes(std::string& out_status_msg);
+
+    /// Mode 04 consentito solo a motore spento e auto ferma: RPM = 0 e
+    /// velocita' = 0 letti dalla centralina negli ultimi 2 s.
+    bool dtcClearAllowed(std::string& out_reason) const;
 
 private:
     static void taskTrampoline(void* arg);
