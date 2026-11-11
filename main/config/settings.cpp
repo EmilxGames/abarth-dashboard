@@ -20,6 +20,8 @@ constexpr const char* kKeyTempUnit    = "tunit";
 constexpr const char* kKeySpeedUnit   = "sunit";
 constexpr const char* kKeyPressureUnit = "punit";
 constexpr const char* kKeyUiTheme     = "uitheme";
+constexpr const char* kKeyUiStyle     = "ui_style";
+constexpr const char* kKeyUiV2Pending  = "ui_v2_pend";
 constexpr const char* kKeyBgTexture   = "bgtexture";
 constexpr const char* kKeyScreenOrient = "scrno";
 constexpr const char* kKeyDarkTheme   = "darkthm";
@@ -128,6 +130,10 @@ bool init() {
     g_settings.speed_unit   = static_cast<SpeedUnit>(load_u8(kKeySpeedUnit, static_cast<uint8_t>(g_settings.speed_unit)));
     g_settings.pressure_unit = static_cast<PressureUnit>(load_u8(kKeyPressureUnit, static_cast<uint8_t>(g_settings.pressure_unit)));
     g_settings.ui_theme     = UiTheme::MinimalFunctional;
+    {
+        const uint8_t st = load_u8(kKeyUiStyle, 0);
+        g_settings.ui_style = (st == 1) ? UiStyle::Racing : UiStyle::Classic;  // valori ignoti -> Classico
+    }
     g_settings.bg_texture   = static_cast<BgTexture>(load_u8(kKeyBgTexture, static_cast<uint8_t>(g_settings.bg_texture)));
     g_settings.screen_orientation = static_cast<ScreenOrientation>(load_u8(kKeyScreenOrient, static_cast<uint8_t>(g_settings.screen_orientation)));
     g_settings.dark_theme   = load_u8(kKeyDarkTheme, g_settings.dark_theme ? 1 : 0) != 0;
@@ -225,6 +231,19 @@ const char* pressureUnitSymbol() {
 void setUiTheme(UiTheme /*t*/) {
     g_settings.ui_theme = UiTheme::MinimalFunctional;
     save_u8(kKeyUiTheme, 0);
+}
+
+void setUiStyle(UiStyle style) {
+    g_settings.ui_style = style;
+    save_u8(kKeyUiStyle, static_cast<uint8_t>(style));
+}
+
+bool isUiV2Pending() {
+    return load_u8(kKeyUiV2Pending, 0) != 0;
+}
+
+void setUiV2Pending(bool pending) {
+    save_u8(kKeyUiV2Pending, pending ? 1 : 0);
 }
 
 void setBgTexture(BgTexture texture) {

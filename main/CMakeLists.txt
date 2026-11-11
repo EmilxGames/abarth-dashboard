@@ -7,6 +7,7 @@ idf_component_register(
              "obd"
              "storage"
              "ui"
+             "ui_v2"
     INCLUDE_DIRS "."
                  "can"
                  "config"

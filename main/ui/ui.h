@@ -18,6 +18,10 @@
 
 namespace abarth::ui {
 
+/// Logica comune alle due interfacce (simulazione demo, allarmi, warmup).
+/// Da chiamare a 10 Hz dal task LVGL (la UI Classica lo fa nel suo timer).
+void background_tick();
+
 /// Costruisce l'intera UI. Da chiamare dopo `display::init()`.
 void build();
 

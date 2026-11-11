@@ -39,6 +39,12 @@ enum class UiTheme : uint8_t {
     MinimalFunctional = 0, ///< Minimalista funzionale ad alta leggibilita'
 };
 
+/// Stile complessivo dell'interfaccia (scelta dell'utente, si applica al riavvio).
+enum class UiStyle : uint8_t {
+    Classic = 0,  ///< Interfaccia attuale (main/ui)
+    Racing  = 1,  ///< Nuova interfaccia ad alte prestazioni (main/ui_v2)
+};
+
 /// Texture di sfondo dello schermo.
 enum class BgTexture : uint8_t {
     Original = 0,
@@ -77,6 +83,7 @@ struct Settings {
     PressureUnit pressure_unit = PressureUnit::Bar;
     /// Stile grafico dell'interfaccia.
     UiTheme   ui_theme     = UiTheme::MinimalFunctional;
+    UiStyle      ui_style     = UiStyle::Classic;  ///< Classico o nuova UI Racing
     /// Texture di sfondo.
     BgTexture bg_texture   = BgTexture::Original;
     /// Orientamento schermo (orizzontale/verticale/verticale capovolto).
@@ -165,6 +172,14 @@ const char* pressureUnitSymbol();
 
 /// Aggiorna lo stile dell'interfaccia (Classic o Motorsport).
 void setUiTheme(UiTheme t);
+
+/// Imposta lo stile dell'interfaccia (applicato al prossimo avvio).
+void setUiStyle(UiStyle style);
+
+/// Flag di sicurezza della nuova UI: impostato prima di costruirla, azzerato
+/// dopo 10 s senza crash. Se all'avvio e' ancora impostato si torna al Classico.
+bool isUiV2Pending();
+void setUiV2Pending(bool pending);
 
 /// Aggiorna la texture di sfondo dello schermo.
 void setBgTexture(BgTexture texture);

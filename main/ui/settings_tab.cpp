@@ -1498,6 +1498,22 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
             lv_label_set_text(lbl_d, "Interfaccia minimalista ad altissimo contrasto: tachimetro digitale, barra giri progressiva e strisce telemetriche a risposta istantanea.");
             lv_obj_set_style_text_color(lbl_d, lv_color_hex(0x9A9AA6), 0);
             lv_obj_set_style_text_font(lbl_d, &lv_font_montserrat_12, 0);
+
+            // Stile interfaccia: Classica (questa) o nuova Racing (si applica al riavvio)
+            lv_obj_t* cs = make_card_group(g_content_panel, "Stile Interfaccia", LV_SYMBOL_IMAGE);
+            make_sub_label(cs, "Racing: nuova interfaccia piu' fluida. Il display si riavvia per applicarla.");
+            lv_obj_t* b_rac = lv_btn_create(cs);
+            lv_obj_set_width(b_rac, LV_PCT(100));
+            lv_obj_set_height(b_rac, 48);
+            lv_obj_set_style_bg_color(b_rac, lv_color_hex(0xE10600), 0);
+            lv_obj_t* l_rac = lv_label_create(b_rac);
+            lv_label_set_text(l_rac, LV_SYMBOL_REFRESH " Passa all'interfaccia Racing");
+            lv_obj_set_style_text_font(l_rac, &lv_font_montserrat_14, 0);
+            lv_obj_center(l_rac);
+            lv_obj_add_event_cb(b_rac, [](lv_event_t*) {
+                settings::setUiStyle(settings::UiStyle::Racing);
+                esp_restart();
+            }, LV_EVENT_CLICKED, nullptr);
             break;
         }
 

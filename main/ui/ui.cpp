@@ -303,8 +303,11 @@ void update_header_clock() {
     lv_label_set_text(g_time_label, buf);
 }
 
-void on_tick(lv_timer_t* /*t*/) {
-    const int64_t now_ms = esp_timer_get_time() / 1000;
+}  // namespace
+
+// Logica comune a entrambe le interfacce (Classica e v2): simulazione demo,
+// allarmi e stima warmup. Va chiamata a 10 Hz dal task LVGL.
+void background_tick() {
 
     // Se la Modalita' Simulazione e' attiva, genera dati telemetrici sintetici
     if (abarth::settings::current().demo_mode) {
@@ -367,6 +370,14 @@ void on_tick(lv_timer_t* /*t*/) {
 
     // Aggiornamento logica di warmup & stima temperatura olio
     abarth::warmup::warmup_mgr().update();
+}
+
+namespace {
+
+void on_tick(lv_timer_t* /*t*/) {
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+
+    background_tick();
 
     // Aggiornamento Badge Countdown Warmup in Header (visibile su tutte le schede)
     if (g_warmup_badge && g_warmup_lbl) {
@@ -1642,6 +1653,7 @@ void rebuild_custom_tab() {
 }
 
 void apply_metric_visibility() {
+    if (!g_main_tabview) return;  // UI Classica non costruita (attiva la v2)
     // 1. Visibilità pulsante scheda custom sulla tab bar
     bool custom_en = abarth::settings::isCustomTabEnabled();
     if (g_tab_btn_custom) {

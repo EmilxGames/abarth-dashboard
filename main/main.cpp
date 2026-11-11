@@ -26,6 +26,7 @@
 #include "storage/telemetry_logger.h"
 #include "ui/splash.h"
 #include "ui/ui.h"
+#include "ui_v2/ui_v2.h"
 
 #include <esp_ota_ops.h>
 #include <driver/gpio.h>
@@ -183,9 +184,35 @@ extern "C" void app_main(void) {
     wait_splash(1000);
 
 #ifndef ABARTH_DIAG_SKIP_UI
-    DIAG("step: ui::build");
-    abarth::ui::build();
-    DIAG("ui::build OK");
+    // Scelta interfaccia: Classica o v2 Racing, con ritorno automatico alla
+    // Classica se la v2 si e' piantata nei primi 10 s dell'avvio precedente.
+    bool use_v2 = abarth::settings::current().ui_style == abarth::settings::UiStyle::Racing;
+    if (use_v2 && abarth::settings::isUiV2Pending()) {
+        DIAG("UI v2 non confermata all'avvio precedente: torno alla UI Classica");
+        abarth::settings::setUiStyle(abarth::settings::UiStyle::Classic);
+        abarth::settings::setUiV2Pending(false);
+        use_v2 = false;
+    }
+    if (use_v2) {
+        DIAG("step: ui_v2::build (Racing)");
+        abarth::settings::setUiV2Pending(true);
+        abarth::ui_v2::build();
+        static esp_timer_handle_t s_v2_ok_timer = nullptr;
+        esp_timer_create_args_t ta = {};
+        ta.callback = [](void*) {
+            abarth::settings::setUiV2Pending(false);
+            ESP_LOGI(TAG, "UI v2 confermata stabile");
+        };
+        ta.name = "ui_v2_ok";
+        if (esp_timer_create(&ta, &s_v2_ok_timer) == ESP_OK) {
+            esp_timer_start_once(s_v2_ok_timer, 10ULL * 1000 * 1000);
+        }
+        DIAG("ui_v2::build OK");
+    } else {
+        DIAG("step: ui::build");
+        abarth::ui::build();
+        DIAG("ui::build OK");
+    }
 #else
     DIAG("step: ui::build SKIPPED (ABARTH_DIAG_SKIP_UI)");
 #endif
