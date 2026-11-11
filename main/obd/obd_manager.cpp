@@ -11,6 +11,7 @@
 #include "config/settings.h"
 #include "data/data_store.h"
 #include "obd/pids.h"
+#include "wifi_manager.h"
 
 namespace abarth::obd {
 
@@ -33,16 +34,146 @@ const char* stateName(ObdState s) {
     return "?";
 }
 
+// --- Coda comandi (revisione C5) -------------------------------------------
+
+struct ObdManager::DtcRequest {
+    SemaphoreHandle_t      done = xSemaphoreCreateBinary();
+    bool                   ok = false;
+    std::vector<DtcItem>   codes;
+    std::string            msg;
+    ~DtcRequest() { if (done) vSemaphoreDelete(done); }
+};
+
+struct ObdManager::Command {
+    enum class Type : uint8_t { ConnectBle, ConnectWifi, Forget, Stop, ReadDtc, ClearDtc };
+    Type                        type;
+    std::string                 arg;
+    uint16_t                    port = 0;
+    std::shared_ptr<DtcRequest> req;
+};
+
 ObdManager::ObdManager() : active_stream_(&ble_), elm_(active_stream_) {}
+
+bool ObdManager::ensureQueue() {
+    if (!err_mtx_) err_mtx_ = xSemaphoreCreateMutex();
+    if (!cmd_q_) cmd_q_ = xQueueCreate(8, sizeof(Command*));
+    return cmd_q_ != nullptr && err_mtx_ != nullptr;
+}
 
 bool ObdManager::start() {
     if (task_) return true;
+    if (!ensureQueue()) return false;
     BaseType_t ok = xTaskCreatePinnedToCore(
         &ObdManager::taskTrampoline, "obd", 8192, this, 4, &task_, 1);
     return ok == pdPASS;
 }
 
+void ObdManager::post(Command* cmd) {
+    if (!task_) start();  // es. passaggio da CAN diretto a OBD a runtime
+    if (!cmd_q_ || xQueueSend(cmd_q_, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "coda comandi OBD piena: comando scartato");
+        if (cmd->req) {
+            cmd->req->msg = "Servizio OBD occupato, riprova.";
+            xSemaphoreGive(cmd->req->done);
+        }
+        delete cmd;
+    }
+}
+
+void ObdManager::processCommands(TickType_t wait) {
+    Command* cmd = nullptr;
+    while (cmd_q_ && xQueueReceive(cmd_q_, &cmd, wait) == pdTRUE) {
+        if (cmd) {
+            execute(*cmd);
+            delete cmd;
+        }
+        wait = 0;
+    }
+    if (!cmd_q_ && wait) vTaskDelay(wait);
+}
+
+void ObdManager::execute(Command& cmd) {
+    switch (cmd.type) {
+        case Command::Type::ConnectBle:  connectBleImpl(cmd.arg); break;
+        case Command::Type::ConnectWifi: connectWifiImpl(cmd.arg, cmd.port); break;
+        case Command::Type::Forget:      forgetImpl(); break;
+        case Command::Type::Stop:
+            if (active_stream_) active_stream_->disconnect();
+            manual_connection_req_ = false;
+            setState(ObdState::Disconnected);
+            break;
+        case Command::Type::ReadDtc:
+            cmd.req->ok = readDtcImpl(cmd.req->codes, cmd.req->msg);
+            xSemaphoreGive(cmd.req->done);
+            break;
+        case Command::Type::ClearDtc:
+            cmd.req->ok = clearDtcImpl(cmd.req->msg);
+            xSemaphoreGive(cmd.req->done);
+            break;
+    }
+}
+
+std::string ObdManager::lastError() const {
+    if (!err_mtx_) return {};
+    xSemaphoreTake(err_mtx_, portMAX_DELAY);
+    std::string copy = last_error_;
+    xSemaphoreGive(err_mtx_);
+    return copy;
+}
+
+void ObdManager::setLastError(const std::string& e) {
+    if (!err_mtx_) return;
+    xSemaphoreTake(err_mtx_, portMAX_DELAY);
+    last_error_ = e;
+    xSemaphoreGive(err_mtx_);
+}
+
 void ObdManager::connectBLE(const std::string& mac) {
+    post(new Command{Command::Type::ConnectBle, mac, 0, nullptr});
+}
+
+void ObdManager::connectWiFi(const std::string& ip, uint16_t port) {
+    post(new Command{Command::Type::ConnectWifi, ip, port, nullptr});
+}
+
+void ObdManager::forgetDevice() {
+    post(new Command{Command::Type::Forget, "", 0, nullptr});
+}
+
+void ObdManager::stopService() {
+    if (!task_) return;  // gia' fermo
+    post(new Command{Command::Type::Stop, "", 0, nullptr});
+}
+
+bool ObdManager::readDtcCodes(std::vector<DtcItem>& out_codes, std::string& out_status_msg) {
+    out_codes.clear();
+    auto req = std::make_shared<DtcRequest>();
+    if (!req->done) { out_status_msg = "Memoria insufficiente"; return false; }
+    post(new Command{Command::Type::ReadDtc, "", 0, req});
+    if (xSemaphoreTake(req->done, pdMS_TO_TICKS(15000)) != pdTRUE) {
+        out_status_msg = "Timeout: il servizio OBD non ha risposto.";
+        return false;
+    }
+    out_codes = req->codes;
+    out_status_msg = req->msg;
+    return req->ok;
+}
+
+bool ObdManager::clearDtcCodes(std::string& out_status_msg) {
+    auto req = std::make_shared<DtcRequest>();
+    if (!req->done) { out_status_msg = "Memoria insufficiente"; return false; }
+    post(new Command{Command::Type::ClearDtc, "", 0, req});
+    if (xSemaphoreTake(req->done, pdMS_TO_TICKS(15000)) != pdTRUE) {
+        out_status_msg = "Timeout: il servizio OBD non ha risposto.";
+        return false;
+    }
+    out_status_msg = req->msg;
+    return req->ok;
+}
+
+// --- Implementazioni eseguite SOLO nel task OBD ----------------------------
+
+void ObdManager::connectBleImpl(const std::string& mac) {
     if (active_stream_) active_stream_->disconnect();
     active_stream_ = &ble_;
     if (!mac.empty()) {
@@ -64,7 +195,7 @@ void ObdManager::connectBLE(const std::string& mac) {
     setState(ObdState::Disconnected);
 }
 
-void ObdManager::connectWiFi(const std::string& ip, uint16_t port) {
+void ObdManager::connectWifiImpl(const std::string& ip, uint16_t port) {
     if (active_stream_) active_stream_->disconnect();
     active_stream_ = &wifi_;
     elm_ = Elm327(active_stream_); // Re-bind
@@ -78,7 +209,7 @@ void ObdManager::connectWiFi(const std::string& ip, uint16_t port) {
     setState(ObdState::Disconnected);
 }
 
-void ObdManager::forgetDevice() {
+void ObdManager::forgetImpl() {
     if (active_stream_) active_stream_->disconnect();
     settings::setSavedDongleMac("");
     settings::setSavedWifi("", "");
@@ -108,9 +239,10 @@ void ObdManager::taskTrampoline(void* arg) {
 
 void ObdManager::run() {
     using namespace abarth::config;
+    ensureQueue();
 
     BleStreamConfig cfg{};
-    const auto& init_s = settings::current();
+    const settings::Settings init_s = settings::current();
     cfg.target_mac   = init_s.saved_dongle_mac;
     cfg.device_name  = init_s.saved_dongle_mac.empty() ? kDefaultBleDeviceName : "";
     cfg.service_uuid = kBleServiceUUID;
@@ -123,26 +255,36 @@ void ObdManager::run() {
     wifi_.begin(wcfg);
 
     while (true) {
-        const auto& s = settings::current();
+        processCommands(0);
+        const settings::Settings s = settings::current();
 
         switch (state_.load()) {
             case ObdState::Disconnected:
             case ObdState::Error: {
                 if (s.connection_mode == settings::ConnectionMode::DirectCan) {
                     // Modalita' attiva e' CAN-Bus Diretto (TWAI): il task OBD resta in standby
-                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    processCommands(pdMS_TO_TICKS(1000));
                     continue;
                 }
 
                 if (!s.auto_connect && !manual_connection_req_) {
                     // Idle mode (riconnessione automatica disattivata da impostazioni)
-                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    processCommands(pdMS_TO_TICKS(1000));
                     continue;
                 }
                 
-                // Configura lo stream per il dispositivo memorizzato o per la scansione automatica
-                if (!s.saved_wifi_ssid.empty()) {
+                // Il trasporto dipende SOLO dalla modalita' scelta (revisione A5)
+                if (s.connection_mode == settings::ConnectionMode::WifiObd) {
                     active_stream_ = &wifi_;
+                    auto& wm = abarth::wifi::WifiManager::instance();
+                    if (!wm.isConnected() && !s.saved_wifi_ssid.empty()) {
+                        // All'avvio la rete del dongle non e' connessa: riconnetti
+                        ESP_LOGI(TAG, "riconnessione alla rete WiFi salvata %s", s.saved_wifi_ssid.c_str());
+                        wm.connect(s.saved_wifi_ssid, s.saved_wifi_pass, nullptr);
+                        for (int i = 0; i < 100 && !wm.isConnected(); ++i) {
+                            vTaskDelay(pdMS_TO_TICKS(100));
+                        }
+                    }
                 } else {
                     active_stream_ = &ble_;
                     BleStreamConfig ble_cfg{};
@@ -163,9 +305,9 @@ void ObdManager::run() {
                 if (active_stream_ && active_stream_->connect()) {
                     setState(ObdState::Initializing);
                 } else {
-                    last_error_ = "dongle non trovato / non connesso";
+                    setLastError("dongle non trovato / non connesso");
                     setState(ObdState::Disconnected);
-                    vTaskDelay(pdMS_TO_TICKS(3000));
+                    processCommands(pdMS_TO_TICKS(3000));
                 }
                 break;
             }
@@ -173,21 +315,21 @@ void ObdManager::run() {
                 if (elm_.init(3500)) {
                     setState(ObdState::Polling);
                 } else {
-                    last_error_ = "init ELM327 fallita";
+                    setLastError("init ELM327 fallita");
                     if (active_stream_) active_stream_->disconnect();
                     setState(ObdState::Disconnected);
-                    vTaskDelay(pdMS_TO_TICKS(2000));
+                    processCommands(pdMS_TO_TICKS(2000));
                 }
                 break;
             }
             case ObdState::Polling: {
                 if (!pollOnce()) {
-                    last_error_ = "connessione persa";
+                    setLastError("connessione persa");
                     if (active_stream_) active_stream_->disconnect();
                     setState(ObdState::Disconnected);
-                    vTaskDelay(pdMS_TO_TICKS(2000));
+                    processCommands(pdMS_TO_TICKS(2000));
                 }
-                vTaskDelay(pdMS_TO_TICKS(kPollIntervalMs));
+                processCommands(pdMS_TO_TICKS(kPollIntervalMs));
                 break;
             }
             case ObdState::Connecting: {
@@ -636,7 +778,7 @@ bool parseDtcResponse(const std::string& raw_resp, std::vector<DtcItem>& out_cod
 }
 }  // namespace
 
-bool ObdManager::readDtcCodes(std::vector<DtcItem>& out_codes, std::string& out_status_msg) {
+bool ObdManager::readDtcImpl(std::vector<DtcItem>& out_codes, std::string& out_status_msg) {
     out_codes.clear();
     if (abarth::settings::current().demo_mode) {
         out_status_msg = "Simulazione: Nessun errore presente in memoria centralina.";
@@ -690,7 +832,7 @@ bool ObdManager::dtcClearAllowed(std::string& out_reason) const {
     return true;
 }
 
-bool ObdManager::clearDtcCodes(std::string& out_status_msg) {
+bool ObdManager::clearDtcImpl(std::string& out_status_msg) {
     if (abarth::settings::current().demo_mode) {
         out_status_msg = "Simulazione: Codici errore ed indicatore MIL azzerati con successo!";
         return true;

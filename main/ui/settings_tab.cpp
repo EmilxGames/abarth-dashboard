@@ -1006,7 +1006,8 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                     if (target_m == settings::current().connection_mode) return;
                     settings::setConnectionMode(target_m);
                     if (target_m == settings::ConnectionMode::DirectCan) {
-                        abarth::obd::obd().forgetDevice();
+                        // Ferma l'OBD senza cancellare dongle/rete salvati
+                        abarth::obd::obd().stopService();
                         abarth::can::can().start();
                     } else if (target_m == settings::ConnectionMode::BleObd) {
                         abarth::can::can().stop();
