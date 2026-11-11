@@ -30,6 +30,30 @@ std::string upper(std::string s) {
                    [](unsigned char c) { return std::toupper(c); });
     return s;
 }
+
+/// Risposta negativa UDS/OBD: "7F <SID> <NRC>" come PRIMO byte di una riga dati.
+/// Con ATS0 gli spazi non ci sono, quindi "7F" puo' comparire a cavallo di due
+/// byte o come dato (es. 41057F = 87 gradi): va riconosciuto solo in testa.
+/// Ritorna true solo se c'e' almeno una riga dati e TUTTE sono negative.
+bool is_negative_response(const std::string& raw) {
+    size_t data_lines = 0, negative_lines = 0;
+    size_t start = 0;
+    for (size_t pos = 0; pos <= raw.size(); ++pos) {
+        if (pos != raw.size() && raw[pos] != '\r' && raw[pos] != '\n') continue;
+        std::string line = upper(strip(raw.substr(start, pos - start)));
+        start = pos + 1;
+        if (line.empty()) continue;
+        // Togli un eventuale prefisso di riga ISO-TP "0:", "1:" ...
+        const size_t colon = line.find(':');
+        if (colon != std::string::npos && colon <= 2) line.erase(0, colon + 1);
+        const bool is_hex = !line.empty() && std::all_of(line.begin(), line.end(),
+                               [](unsigned char c) { return std::isxdigit(c) != 0; });
+        if (!is_hex) continue;  // SEARCHING..., banner, ecc.
+        ++data_lines;
+        if (line.size() >= 2 && line[0] == '7' && line[1] == 'F') ++negative_lines;
+    }
+    return data_lines > 0 && negative_lines == data_lines;
+}
 }  // namespace
 
 Elm327::Elm327(IStream* stream) : stream_(stream) {}
@@ -57,7 +81,7 @@ ElmResponse Elm327::command(const std::string& cmd, uint32_t timeout_ms) {
     // E' un "errore di protocollo", NON un errore di collegamento: il link
     // BLE e' sano, semplicemente la centralina non supporta quel PID.
     if (payload.find("NODATA") != std::string::npos ||
-        payload.find("7F") != std::string::npos) {
+        is_negative_response(out.raw)) {
         out.error   = "NO DATA";
         out.no_data = true;
         return out;

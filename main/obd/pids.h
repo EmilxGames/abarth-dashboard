@@ -63,10 +63,13 @@ inline constexpr size_t kAbarthCustomPidsCount = 4;
 /* === Utility di parsing -------------------------------------------------- */
 
 /// Converte una stringa hex (es. "41 0C 0F A0" o "410C0FA0") in array di byte.
-/// Se la prima coppia corrisponde al mode atteso, viene verificato. Gli header
-/// CAN ("7E8 03 41 0C ...") vengono rimossi automaticamente.
+/// @param expected_sid  byte di risposta atteso (0x41, 0x43, 0x47, 0x62...).
+///        Se != 0 la risposta deve iniziare con quel byte (eventualmente dopo
+///        al massimo 3 byte di header/lunghezza); una risposta negativa 0x7F o un
+///        SID diverso danno 0. Se == 0 i byte vengono restituiti tutti, senza tagli.
 /// @return numero di byte decodificati, 0 su errore.
-size_t parseHexPayload(std::string_view hex, uint8_t* out, size_t out_max);
+size_t parseHexPayload(std::string_view hex, uint8_t* out, size_t out_max,
+                       uint8_t expected_sid = 0);
 
 /// Estrae la porzione dati dalla risposta, verificando che mode e pid_id
 /// siano quelli attesi. Popola `data` (subset di `raw`) e ritorna true.

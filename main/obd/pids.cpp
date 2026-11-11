@@ -306,7 +306,8 @@ static_assert(sizeof(kAbarthCustomPids) / sizeof(kAbarthCustomPids[0]) == kAbart
 
 /* === Parsing ============================================================= */
 
-size_t parseHexPayload(std::string_view hex, uint8_t* out, size_t out_max) {
+size_t parseHexPayload(std::string_view hex, uint8_t* out, size_t out_max,
+                       uint8_t expected_sid) {
     // Rimuove spazi, tab e newline. Gestisce prefissi di header CAN come
     // "7E8 06 41 ..." (primo token e' l'header a 3-4 cifre, secondo e' la
     // lunghezza, poi i dati reali).
@@ -324,16 +325,17 @@ size_t parseHexPayload(std::string_view hex, uint8_t* out, size_t out_max) {
     }
     if (high >= 0) return 0;
 
-    // Se i primi byte sembrano un header (es. 0x7E, 0xE8) seguiti da una
-    // lunghezza, li saltiamo. Riconosco il pattern: primo byte >= 0x40 e
-    // secondo byte <= 0x08 non e' affidabile, quindi cerco 0x41 o 0x62
-    // (mode response) dall'inizio e taglio prima.
+    // Il primo byte deve essere il SID di risposta atteso. Tolleriamo fino a
+    // 3 byte iniziali (header CAN + lunghezza con ATH1/ATCAF0), ma NON cerchiamo
+    // il SID in tutto il payload: 0x41/0x7F possono comparire come dati.
     size_t start = 0;
-    for (size_t i = 0; i + 1 < tmp_len; ++i) {
-        if (tmp[i] == 0x41 || tmp[i] == 0x62 || tmp[i] == 0x7F) {
-            start = i;
-            break;
+    if (expected_sid != 0) {
+        bool found = false;
+        for (size_t i = 0; i < tmp_len && i <= 3; ++i) {
+            if (tmp[i] == expected_sid) { start = i; found = true; break; }
+            if (i == 0 && tmp[0] == 0x7F) return 0;  // risposta negativa
         }
+        if (!found) return 0;
     }
     if (start >= tmp_len) return 0;
     const size_t copy = std::min(out_max, tmp_len - start);

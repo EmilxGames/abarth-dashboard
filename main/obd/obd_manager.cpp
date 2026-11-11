@@ -250,7 +250,7 @@ bool ObdManager::pollOnce() {
                 size_t line_len = pos - line_start;
                 if (line_len > 0) {
                     std::string_view line(raw.data() + line_start, line_len);
-                    size_t n = parseHexPayload(line, buf, sizeof(buf));
+                    size_t n = parseHexPayload(line, buf, sizeof(buf), 0x41);
                     if (n >= 2) {
                         const PidSpec* spec = findPidSpecByResponse(buf, n, kStandardPids, kStandardPidsCount);
                         if (spec) {
@@ -337,7 +337,7 @@ bool ObdManager::pollOnce() {
         link_fail_count = 0;
 
         uint8_t raw[64];
-        size_t n = parseHexPayload(resp.raw, raw, sizeof(raw));
+        size_t n = parseHexPayload(resp.raw, raw, sizeof(raw), spec.response_mode);
         if (n == 0) {
             fail_count_.fetch_add(1);
             fail_count++;
