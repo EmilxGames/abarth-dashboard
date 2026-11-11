@@ -1,5 +1,8 @@
 #include "config/settings.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include <esp_log.h>
 #include <nvs_flash.h>
 
@@ -49,6 +52,13 @@ constexpr const char* kKeyCanListenOnly = "can_lo_v2";
 
 Settings g_settings;
 bool     g_ready = false;
+// Protegge i campi std::string di g_settings: current() ne fa una copia mentre
+// altri task possono modificarli (revisione A6).
+SemaphoreHandle_t g_mtx = xSemaphoreCreateRecursiveMutex();
+struct Lock {
+    Lock()  { if (g_mtx) xSemaphoreTakeRecursive(g_mtx, portMAX_DELAY); }
+    ~Lock() { if (g_mtx) xSemaphoreGiveRecursive(g_mtx); }
+};
 nvs_handle_t g_handle = 0;
 
 uint8_t clamp_brightness(uint8_t percent) {
@@ -163,7 +173,10 @@ bool init() {
     return true;
 }
 
-const Settings& current() { return g_settings; }
+Settings current() {
+    Lock l;
+    return g_settings;  // copia: nessun riferimento condiviso tra task
+}
 
 void previewBrightness(uint8_t percent) {
     display::setBrightness(static_cast<int>(clamp_brightness(percent)));
@@ -252,13 +265,16 @@ void setDebugMode(bool enable) {
 }
 
 void setSavedDongleMac(const std::string& mac) {
-    g_settings.saved_dongle_mac = mac;
+    { Lock l; g_settings.saved_dongle_mac = mac; }
     save_str(kKeyDongleMac, mac);
 }
 
 void setSavedWifi(const std::string& ssid, const std::string& pass) {
-    g_settings.saved_wifi_ssid = ssid;
-    g_settings.saved_wifi_pass = pass;
+    {
+        Lock l;
+        g_settings.saved_wifi_ssid = ssid;
+        g_settings.saved_wifi_pass = pass;
+    }
     save_str(kKeyWifiSsid, ssid);
     save_str(kKeyWifiPass, pass);
 }

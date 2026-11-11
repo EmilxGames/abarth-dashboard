@@ -139,7 +139,8 @@ struct Settings {
 bool init();
 
 /// Restituisce lo snapshot corrente delle impostazioni.
-const Settings& current();
+/// Copia delle impostazioni correnti (thread-safe).
+Settings current();
 
 /// Aggiorna la luminosita' e la persiste. Applica subito al backlight.
 void setBrightness(uint8_t percent);

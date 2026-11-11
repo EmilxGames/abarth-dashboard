@@ -19,6 +19,7 @@
 #include <string>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "driver/twai.h"
 #include "data/data_store.h"
 
@@ -41,7 +42,7 @@ struct BusStats {
     std::atomic<uint32_t> tx_count{0};
     std::atomic<uint32_t> err_count{0};
     std::atomic<float>    rx_fps{0.0f};
-    std::string           last_error;
+    std::string           last_error;   ///< protetto da CanManager::err_mtx_
 };
 
 class CanManager {
@@ -77,7 +78,8 @@ public:
     uint32_t txFrames(uint8_t bus_idx = 0) const;
     uint32_t busErrors(uint8_t bus_idx = 0) const;
     float    rxRateFps(uint8_t bus_idx = 0) const;
-    const std::string& lastError(uint8_t bus_idx = 0) const;
+    /// Copia dell'ultimo errore (thread-safe)
+    std::string lastError(uint8_t bus_idx = 0) const;
 
     /// Statistiche globali aggregate
     uint32_t totalRxFrames() const { return rxFrames(0) + rxFrames(1); }
@@ -93,6 +95,7 @@ private:
     void runCan2();
 
     void setBusState(uint8_t bus_idx, CanState s);
+    void setLastError(uint8_t bus_idx, const std::string& err);
     void handleReceivedMessageCan1(const twai_message_t& msg);
     void handleReceivedMessageCan2(const twai_message_t& msg);
     bool sendNextObdQuery();
@@ -100,9 +103,10 @@ private:
                      const twai_timing_config_t& t_config);
 
     BusStats      bus_[2];
-    twai_handle_t twai_handles_[2] = {nullptr, nullptr};
-    TaskHandle_t  tasks_[2]        = {nullptr, nullptr};
-    bool          stop_requested_[2] = {false, false};
+    twai_handle_t twai_handles_[2] = {nullptr, nullptr};   ///< usati solo dal task del bus
+    std::atomic<TaskHandle_t> tasks_[2] = {nullptr, nullptr};
+    std::atomic<bool>         stop_requested_[2] = {false, false};
+    SemaphoreHandle_t         err_mtx_ = nullptr;
 
     // Gestione query OBD-over-CAN (su CAN 1 C-CAN)
     uint8_t current_pid_index_  = 0;

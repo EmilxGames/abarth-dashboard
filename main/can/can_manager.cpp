@@ -65,7 +65,7 @@ const char* canStateName(CanState s) {
     }
 }
 
-CanManager::CanManager() = default;
+CanManager::CanManager() : err_mtx_(xSemaphoreCreateMutex()) {}
 
 CanManager::~CanManager() {
     stop();
@@ -103,7 +103,7 @@ void CanManager::stop() {
 bool CanManager::startBus(uint8_t bus_idx) {
     if (bus_idx > 1) return false;
 
-    if (tasks_[bus_idx] != nullptr) {
+    if (tasks_[bus_idx].load() != nullptr) {
         ESP_LOGW(TAG, "CAN %d task gia' in esecuzione", bus_idx + 1);
         return true;
     }
@@ -114,19 +114,25 @@ bool CanManager::startBus(uint8_t bus_idx) {
     const char* task_name = (bus_idx == 0) ? "can1_c_task" : "can2_b_task";
     auto trampoline = (bus_idx == 0) ? taskTrampolineCan1 : taskTrampolineCan2;
 
+    TaskHandle_t handle = nullptr;
+    // Il task scrive tasks_[i] = nullptr quando esce: impostiamo l'handle prima
+    // che possa girare creando il task sospeso.
     BaseType_t ret = xTaskCreatePinnedToCore(
         trampoline,
         task_name,
         4096,
         this,
         tskIDLE_PRIORITY + 3,
-        &tasks_[bus_idx],
+        &handle,
         tskNO_AFFINITY
     );
+    if (ret == pdPASS && handle) {
+        tasks_[bus_idx].store(handle);
+    }
 
-    if (ret != pdPASS || !tasks_[bus_idx]) {
+    if (ret != pdPASS || !handle) {
         ESP_LOGE(TAG, "Creazione task CAN %d fallita", bus_idx + 1);
-        bus_[bus_idx].last_error = "creazione task fallita";
+        setLastError(bus_idx, "creazione task fallita");
         setBusState(bus_idx, CanState::Error);
         return false;
     }
@@ -139,12 +145,17 @@ void CanManager::stopBus(uint8_t bus_idx) {
     if (bus_idx > 1) return;
 
     stop_requested_[bus_idx] = true;
-    if (tasks_[bus_idx] != nullptr) {
-        // Attendi che il task esca dal loop e si autodistrugga
-        for (int i = 0; i < 20 && tasks_[bus_idx] != nullptr; ++i) {
+    if (tasks_[bus_idx].load() != nullptr) {
+        // Attendi che il task esca dal loop: e' lui a disinstallare il driver.
+        // Il ciclo del task dura al massimo ~20 ms, 2 s sono ampiamente sufficienti.
+        for (int i = 0; i < 200 && tasks_[bus_idx].load() != nullptr; ++i) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
-        tasks_[bus_idx] = nullptr;
+        if (tasks_[bus_idx].load() != nullptr) {
+            // Non disinstallare il driver sotto i piedi di un task ancora vivo
+            ESP_LOGE(TAG, "CAN %d: il task non e' terminato entro 2 s", bus_idx + 1);
+            return;
+        }
     }
 
     if (twai_handles_[bus_idx] != nullptr) {
@@ -207,10 +218,19 @@ float CanManager::rxRateFps(uint8_t bus_idx) const {
     return bus_[bus_idx].rx_fps.load(std::memory_order_relaxed);
 }
 
-const std::string& CanManager::lastError(uint8_t bus_idx) const {
-    static const std::string empty;
-    if (bus_idx > 1) return empty;
-    return bus_[bus_idx].last_error;
+std::string CanManager::lastError(uint8_t bus_idx) const {
+    if (bus_idx > 1 || !err_mtx_) return {};
+    xSemaphoreTake(err_mtx_, portMAX_DELAY);
+    std::string copy = bus_[bus_idx].last_error;
+    xSemaphoreGive(err_mtx_);
+    return copy;
+}
+
+void CanManager::setLastError(uint8_t bus_idx, const std::string& err) {
+    if (bus_idx > 1 || !err_mtx_) return;
+    xSemaphoreTake(err_mtx_, portMAX_DELAY);
+    bus_[bus_idx].last_error = err;
+    xSemaphoreGive(err_mtx_);
 }
 
 bool CanManager::transmit(uint8_t bus_idx, uint32_t id, bool extd, const uint8_t* data, uint8_t len) {
@@ -440,11 +460,16 @@ void CanManager::handleReceivedMessageCan2(const twai_message_t& msg) {
 }
 
 void CanManager::taskTrampolineCan1(void* arg) {
-    static_cast<CanManager*>(arg)->runCan1();
+    auto* self = static_cast<CanManager*>(arg);
+    // Attendi che startBus abbia registrato l'handle (il task puo' partire subito)
+    while (self->tasks_[0].load() == nullptr) vTaskDelay(1);
+    self->runCan1();
 }
 
 void CanManager::taskTrampolineCan2(void* arg) {
-    static_cast<CanManager*>(arg)->runCan2();
+    auto* self = static_cast<CanManager*>(arg);
+    while (self->tasks_[1].load() == nullptr) vTaskDelay(1);
+    self->runCan2();
 }
 
 bool CanManager::installCan1(twai_mode_t mode, gpio_num_t tx_pin, gpio_num_t rx_pin,
@@ -465,14 +490,14 @@ bool CanManager::installCan1(twai_mode_t mode, gpio_num_t tx_pin, gpio_num_t rx_
     esp_err_t err = twai_driver_install_v2(&g_config, &t_config, &f_config, &twai_handles_[0]);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "CAN 1 twai_driver_install_v2 fallito: %s (TX=%d, RX=%d)", esp_err_to_name(err), tx_pin, rx_pin);
-        bus_[0].last_error = "driver install fallito (" + std::string(esp_err_to_name(err)) + ")";
+        setLastError(0, "driver install fallito (" + std::string(esp_err_to_name(err)) + ")");
         twai_handles_[0] = nullptr;
         return false;
     }
     err = twai_start_v2(twai_handles_[0]);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "CAN 1 twai_start_v2 fallito: %s", esp_err_to_name(err));
-        bus_[0].last_error = "twai start fallito (" + std::string(esp_err_to_name(err)) + ")";
+        setLastError(0, "twai start fallito (" + std::string(esp_err_to_name(err)) + ")");
         twai_driver_uninstall_v2(twai_handles_[0]);
         twai_handles_[0] = nullptr;
         return false;
@@ -491,7 +516,7 @@ void CanManager::runCan1() {
     twai_timing_config_t t_config;
     if (!getTimingConfig(s.can1_baud_rate, t_config)) {
         ESP_LOGE(TAG, "CAN 1: baud rate non valido (%lu): bus non avviato", static_cast<unsigned long>(s.can1_baud_rate));
-        bus_[0].last_error = "baud rate non valido (" + std::to_string(s.can1_baud_rate) + ")";
+        setLastError(0, "baud rate non valido (" + std::to_string(s.can1_baud_rate) + ")");
         setBusState(0, CanState::Error);
         tasks_[0] = nullptr;
         vTaskDelete(nullptr);
@@ -551,7 +576,7 @@ void CanManager::runCan1() {
                 setBusState(0, CanState::BusOff);
                 if (bus_off_count >= kMaxBusOffBeforeListenOnly) {
                     ESP_LOGE(TAG, "CAN 1: %d bus-off, TX disabilitata: torno in ascolto passivo fino al riavvio", bus_off_count);
-                    bus_[0].last_error = "3 bus-off: ascolto passivo forzato";
+                    setLastError(0, "3 bus-off: ascolto passivo forzato");
                     forced_listen_only = true;
                     if (!switch_mode(false)) break;
                 } else {
@@ -664,7 +689,7 @@ void CanManager::runCan2() {
     twai_timing_config_t t_config;
     if (!getTimingConfig(s.can2_baud_rate, t_config)) {
         ESP_LOGE(TAG, "CAN 2: baud rate non valido (%lu): bus non avviato", static_cast<unsigned long>(s.can2_baud_rate));
-        bus_[1].last_error = "baud rate non valido (" + std::to_string(s.can2_baud_rate) + ")";
+        setLastError(1, "baud rate non valido (" + std::to_string(s.can2_baud_rate) + ")");
         setBusState(1, CanState::Error);
         tasks_[1] = nullptr;
         vTaskDelete(nullptr);
@@ -675,7 +700,7 @@ void CanManager::runCan2() {
     esp_err_t err = twai_driver_install_v2(&g_config, &t_config, &f_config, &twai_handles_[1]);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "CAN 2 twai_driver_install_v2 fallito: %s (TX=%d, RX=%d)", esp_err_to_name(err), tx_pin, rx_pin);
-        bus_[1].last_error = "driver install fallito (" + std::string(esp_err_to_name(err)) + ")";
+        setLastError(1, "driver install fallito (" + std::string(esp_err_to_name(err)) + ")");
         setBusState(1, CanState::Error);
         tasks_[1] = nullptr;
         vTaskDelete(nullptr);
@@ -685,7 +710,7 @@ void CanManager::runCan2() {
     err = twai_start_v2(twai_handles_[1]);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "CAN 2 twai_start_v2 fallito: %s", esp_err_to_name(err));
-        bus_[1].last_error = "twai start fallito (" + std::string(esp_err_to_name(err)) + ")";
+        setLastError(1, "twai start fallito (" + std::string(esp_err_to_name(err)) + ")");
         twai_driver_uninstall_v2(twai_handles_[1]);
         twai_handles_[1] = nullptr;
         setBusState(1, CanState::Error);
