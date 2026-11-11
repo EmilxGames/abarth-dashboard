@@ -445,10 +445,9 @@ void on_tick(lv_timer_t* /*t*/) {
     // timer UI si ferma prima del reset HP_WDT.
     static uint32_t tick_count = 0;
     if ((tick_count++ % 20) == 0) {
-        printf("[I][ui] [TICK] #%lu uptime=%lldms\n",
-               static_cast<unsigned long>(tick_count - 1),
-               static_cast<long long>(now_ms));
-        fflush(stdout);
+        ESP_LOGD(TAG, "[TICK] #%lu uptime=%lldms",
+                 static_cast<unsigned long>(tick_count - 1),
+                 static_cast<long long>(now_ms));
     }
 
 

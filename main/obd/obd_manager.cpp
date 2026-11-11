@@ -393,20 +393,20 @@ bool ObdManager::pollOnce() {
     const int64_t now_for_diag = esp_timer_get_time() / 1000;
     if (now_for_diag - last_diag_log_ms > 5000) {
         last_diag_log_ms = now_for_diag;
-        ESP_LOGI(TAG, "=== DIAGNOSTICA PID ===");
+        ESP_LOGD(TAG, "=== DIAGNOSTICA PID ===");
         for (size_t i = 0; i < kStandardPidsCount; ++i) {
             const auto& spec = kStandardPids[i];
             abarth::data::Sample s = data::store().get(spec.metric);
             const char* status = s.supported ? "OK " : "NO-DATA";
             if (s.valid()) {
-                ESP_LOGI(TAG, "  [%s] %-22s = %.1f %.*s  (req=%.*s)",
+                ESP_LOGD(TAG, "  [%s] %-22s = %.1f %.*s  (req=%.*s)",
                          status,
                          spec.name.data(),
                          s.value,
                          (int)spec.unit.size(), spec.unit.data(),
                          (int)spec.request.size(), spec.request.data());
             } else {
-                ESP_LOGI(TAG, "  [%s] %-22s = N/A        (req=%.*s)",
+                ESP_LOGD(TAG, "  [%s] %-22s = N/A        (req=%.*s)",
                          status,
                          spec.name.data(),
                          (int)spec.request.size(), spec.request.data());
@@ -417,20 +417,20 @@ bool ObdManager::pollOnce() {
             abarth::data::Sample s = data::store().get(spec.metric);
             const char* status = s.supported ? "OK " : "NO-DATA";
             if (s.valid()) {
-                ESP_LOGI(TAG, "  [%s] %-22s = %.1f %.*s  (req=%.*s)",
+                ESP_LOGD(TAG, "  [%s] %-22s = %.1f %.*s  (req=%.*s)",
                          status,
                          spec.name.data(),
                          s.value,
                          (int)spec.unit.size(), spec.unit.data(),
                          (int)spec.request.size(), spec.request.data());
             } else {
-                ESP_LOGI(TAG, "  [%s] %-22s = N/A        (req=%.*s)",
+                ESP_LOGD(TAG, "  [%s] %-22s = N/A        (req=%.*s)",
                          status,
                          spec.name.data(),
                          (int)spec.request.size(), spec.request.data());
             }
         }
-        ESP_LOGI(TAG, "=== tot OK=%lu ERR=%lu ===",
+        ESP_LOGD(TAG, "=== tot OK=%lu ERR=%lu ===",
                  (unsigned long)success_count_.load(), (unsigned long)fail_count_.load());
     }
 

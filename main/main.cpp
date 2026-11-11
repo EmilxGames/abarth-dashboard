@@ -30,19 +30,17 @@ static constexpr const char* TAG = "main";
 
 #define DIAG(fmt, ...) do { printf("[I][main] [DIAG] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } while (0)
 
+// Heartbeat diagnostico: visibile solo con livello di log DEBUG
+// (idf.py menuconfig -> Log output, oppure esp_log_level_set("main", ESP_LOG_DEBUG)).
 static void heartbeat_task(void* /*arg*/) {
     uint32_t tick = 0;
     while (true) {
-        const uint64_t uptime_ms = esp_timer_get_time() / 1000ULL;
-        const size_t   heap_kb   = esp_get_free_heap_size() / 1024;
-        const size_t   psram_kb  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024;
-        printf("[I][main] [BEAT] #%lu uptime=%llums heap=%uK psram=%uK\n",
-               static_cast<unsigned long>(tick++),
-               uptime_ms,
-               static_cast<unsigned>(heap_kb),
-               static_cast<unsigned>(psram_kb));
-        fflush(stdout);
-        vTaskDelay(pdMS_TO_TICKS(200));
+        ESP_LOGD(TAG, "[BEAT] #%lu uptime=%llums heap=%uK psram=%uK",
+                 static_cast<unsigned long>(tick++),
+                 static_cast<unsigned long long>(esp_timer_get_time() / 1000ULL),
+                 static_cast<unsigned>(esp_get_free_heap_size() / 1024),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
 
