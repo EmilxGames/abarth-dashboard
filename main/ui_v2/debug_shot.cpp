@@ -17,6 +17,7 @@
 #include "ui_v2/settings_pages.h"
 
 namespace abarth::display { void* debugFramebuffer(); }
+extern "C" void lvgl_port_debug_touch(bool active, bool pressed, int32_t x, int32_t y);
 
 namespace abarth::ui_v2::debug_shot {
 namespace {
@@ -68,8 +69,62 @@ void dump(int idx) {
     esp_log_level_set("*", ESP_LOG_INFO);
 }
 
+// Trascina da (x,y0) a (x,y1) in `ms` millisecondi con il tocco simulato
+void drag(int32_t x, int32_t y0, int32_t y1, int ms) {
+    const int steps = ms / 20;
+    for (int i = 0; i <= steps; ++i) {
+        lvgl_port_debug_touch(true, true, x, y0 + (y1 - y0) * i / steps);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    lvgl_port_debug_touch(true, false, x, y1);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    lvgl_port_debug_touch(false, false, 0, 0);
+}
+void tap(int32_t x, int32_t y) {
+    lvgl_port_debug_touch(true, true, x, y);
+    vTaskDelay(pdMS_TO_TICKS(120));
+    lvgl_port_debug_touch(true, false, x, y);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    lvgl_port_debug_touch(false, false, 0, 0);
+}
+
+void touch_tests() {
+    // Impostazioni: apri ogni categoria toccando la sua riga, trascina in su,
+    // verifica che la sottopagina scorra e che non si apra un'altra categoria.
+    if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); showPage(Page::Setup); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(400));
+    for (int n = 0; n < 11; ++n) {
+        // righe dell'elenco: inizio scheda y=56+10+34, righe 72 px + 1 di separatore
+        const int32_t y = 56 + 8 + 34 + n * 73 + 36;
+        tap(300, y);
+        vTaskDelay(pdMS_TO_TICKS(400));
+        int depth0 = 0; int32_t sy0 = 0, sy1 = 0, bottom = 0;
+        if (lvgl_port_lock(-1)) { depth0 = settings_pages::debugDepth(); lv_obj_t* l = settings_pages::debugTopList(); sy0 = l ? lv_obj_get_scroll_y(l) : -1; bottom = l ? lv_obj_get_scroll_bottom(l) : 0; lvgl_port_unlock(); }
+        drag(300, 850, 350, 500);
+        vTaskDelay(pdMS_TO_TICKS(600));
+        int depth1 = 0;
+        if (lvgl_port_lock(-1)) { depth1 = settings_pages::debugDepth(); lv_obj_t* l = settings_pages::debugTopList(); sy1 = l ? lv_obj_get_scroll_y(l) : -1; lvgl_port_unlock(); }
+        const bool ok = depth0 == 1 && depth1 == 1 && (bottom <= 0 || sy1 > sy0);
+        ESP_LOGW("TOUCH_TEST", "categoria %d: aperta=%d dopo_drag=%d scroll %ld -> %ld (scorribile %ld) %s",
+                 n, depth0, depth1, (long)sy0, (long)sy1, (long)bottom, ok ? "OK" : "ERRORE");
+        if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); lvgl_port_unlock(); }
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+    // swipe orizzontale dentro una sottopagina: non deve cambiare pagina
+    tap(300, 56 + 8 + 34 + 36);
+    vTaskDelay(pdMS_TO_TICKS(400));
+    for (int i = 0; i <= 15; ++i) { lvgl_port_debug_touch(true, true, 500 - i * 25, 600); vTaskDelay(pdMS_TO_TICKS(20)); }
+    lvgl_port_debug_touch(true, false, 125, 600); vTaskDelay(pdMS_TO_TICKS(100)); lvgl_port_debug_touch(false, false, 0, 0);
+    vTaskDelay(pdMS_TO_TICKS(400));
+    int d = 0;
+    if (lvgl_port_lock(-1)) { d = settings_pages::debugDepth(); lvgl_port_unlock(); }
+    ESP_LOGW("TOUCH_TEST", "swipe orizzontale in sottopagina: profondita' %d (atteso 1) %s", d, d == 1 ? "OK" : "ERRORE");
+    if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); showPage(Page::Guida); lvgl_port_unlock(); }
+}
+
 void task(void*) {
     vTaskDelay(pdMS_TO_TICKS(15000));
+    touch_tests();
     // Impostazioni: elenco categorie e ogni sottopagina (in alto e in fondo)
     if (lvgl_port_lock(-1)) { showPage(Page::Setup); lvgl_port_unlock(); }
     vTaskDelay(pdMS_TO_TICKS(500));

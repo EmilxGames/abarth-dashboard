@@ -144,6 +144,7 @@ lv_obj_t* pushRoot() {
     lv_obj_set_style_bg_opa(p->root, LV_OPA_TRANSP, 0);
     p->list = w::box(p->root, 0, 0, g_w, g_h, kBg);
     lv_obj_set_style_bg_opa(p->list, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(p->list, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(p->list, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(p->list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(p->list, LV_SCROLLBAR_MODE_OFF);
@@ -157,6 +158,10 @@ lv_obj_t* push(const char* title) {
     auto* p = new Page();
     p->root = w::box(g_host, 0, 0, g_w, g_h, kBg);
     lv_obj_remove_flag(p->root, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    // La sottopagina deve "prendere" i tocchi: senza CLICKABLE LVGL cerca un
+    // oggetto toccabile sotto (l'elenco categorie) e scroll/tap finiscono li'.
+    lv_obj_add_flag(p->root, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(p->root, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_t* hdr = w::box(p->root, 0, 0, g_w, kHeaderH, kBg);
     lv_obj_add_flag(hdr, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(hdr, back_cb, LV_EVENT_CLICKED, nullptr);
@@ -166,11 +171,14 @@ lv_obj_t* push(const char* title) {
     lv_obj_set_pos(t, kMargin + 44, (kHeaderH - lv_font_get_line_height(fontBody())) / 2);
     p->list = w::box(p->root, 0, kHeaderH, g_w, g_h - kHeaderH, kBg);
     lv_obj_set_style_bg_opa(p->list, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(p->list, LV_OBJ_FLAG_CLICKABLE);   // si scorre anche toccando gli spazi vuoti
     lv_obj_add_flag(p->list, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(p->list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(p->list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_remove_flag(p->list, LV_OBJ_FLAG_SCROLL_ELASTIC);
     lv_obj_remove_flag(p->list, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    // la pagina sotto viene nascosta: niente tocchi ne' disegno inutile
+    if (!g_stack.empty()) lv_obj_add_flag(g_stack.back()->root, LV_OBJ_FLAG_HIDDEN);
     g_stack.push_back(p);
     return p->list;
 }
@@ -180,8 +188,10 @@ void pop() {
     if (g_stack.empty() || (g_has_root && g_stack.size() == 1)) return;  // la radice resta
     Page* p = g_stack.back();
     g_stack.pop_back();
+    lv_obj_add_flag(p->root, LV_OBJ_FLAG_HIDDEN);
     lv_obj_delete_async(p->root);   // asincrono: si puo' chiamare da una callback della pagina
     delete p;
+    if (!g_stack.empty()) lv_obj_remove_flag(g_stack.back()->root, LV_OBJ_FLAG_HIDDEN);
 }
 
 void popAll() { while (depth() > 0) pop(); }
@@ -371,6 +381,7 @@ lv_obj_t* dialog_card(const char* title, const std::string& text, int32_t& out_h
     lv_obj_set_style_bg_opa(g_dialog, LV_OPA_TRANSP, 0);
     lv_obj_add_flag(g_dialog, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(g_dialog, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_remove_flag(g_dialog, LV_OBJ_FLAG_EVENT_BUBBLE);
     const int32_t dw = cw();
     lv_point_t sz;
     lv_text_get_size(&sz, text.c_str(), fontUnit(), 0, 4, dw - 2 * kCardPad, LV_TEXT_FLAG_NONE);

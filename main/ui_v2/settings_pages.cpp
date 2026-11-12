@@ -675,6 +675,8 @@ void update(int64_t now_ms) {
 
 bool inSubPage() { return sp::depth() > 0; }
 lv_obj_t* rootList() { return g_root; }
+int debugDepth() { return sp::depth(); }
+lv_obj_t* debugTopList() { return sp::topList(); }
 bool debugScrollBottom() {
     lv_obj_t* l = sp::topList();
     if (!l || lv_obj_get_scroll_bottom(l) <= 0) return false;

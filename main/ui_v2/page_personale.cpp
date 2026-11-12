@@ -95,6 +95,8 @@ void picker_pick_cb(lv_event_t* e) {
 void open_picker() {
     // Elenco a tutta pagina, righe semplici su schede (una sola volta alla volta)
     g_picker = w::box(g_page, 0, 0, g_w, g_h, kBg);
+    lv_obj_add_flag(g_picker, LV_OBJ_FLAG_CLICKABLE);   // non far passare i tocchi alle schede sotto
+    lv_obj_remove_flag(g_picker, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_flag(g_picker, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(g_picker, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(g_picker, LV_SCROLLBAR_MODE_OFF);

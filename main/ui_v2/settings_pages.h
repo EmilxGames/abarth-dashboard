@@ -14,4 +14,6 @@ lv_obj_t* rootList();
 void debugOpen(int n);
 /// Solo debug: scorre la sottopagina aperta in fondo; ritorna false se non scorre
 bool debugScrollBottom();
+int debugDepth();
+lv_obj_t* debugTopList();
 }

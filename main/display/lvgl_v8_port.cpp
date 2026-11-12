@@ -310,8 +310,26 @@ static void flush_callback(lv_display_t *disp, const lv_area_t *area, uint8_t *p
     lv_display_flush_ready(disp);
 }
 
+#if CONFIG_ABARTH_SCREENSHOT
+// Tocco simulato per i test automatici (solo build di debug)
+static volatile bool s_fake_active = false, s_fake_pressed = false;
+static volatile int32_t s_fake_x = 0, s_fake_y = 0;
+extern "C" void lvgl_port_debug_touch(bool active, bool pressed, int32_t x, int32_t y)
+{
+    s_fake_x = x; s_fake_y = y; s_fake_pressed = pressed; s_fake_active = active;
+}
+#endif
+
 static void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data)
 {
+#if CONFIG_ABARTH_SCREENSHOT
+    if (s_fake_active) {
+        data->point.x = s_fake_x;
+        data->point.y = s_fake_y;
+        data->state = s_fake_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+        return;
+    }
+#endif
     Touch *tp = (Touch *)lv_indev_get_user_data(indev);
     TouchPoint point;
     data->state = LV_INDEV_STATE_RELEASED;
