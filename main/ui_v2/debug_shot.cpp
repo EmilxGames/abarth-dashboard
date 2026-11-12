@@ -17,6 +17,7 @@
 #include "ui_v2/settings_pages.h"
 
 namespace abarth::display { void* debugFramebuffer(); }
+namespace abarth::ui_v2 { Page debugCurrentPage(); }
 extern "C" void lvgl_port_debug_touch(bool active, bool pressed, int32_t x, int32_t y);
 
 namespace abarth::ui_v2::debug_shot {
@@ -122,8 +123,41 @@ void touch_tests() {
     if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); showPage(Page::Guida); lvgl_port_unlock(); }
 }
 
+void gear_test() {
+    // da ogni pagina: ingranaggio -> IMPOSTAZIONI, di nuovo -> pagina di partenza
+    const int32_t gx = LV_HOR_RES - 12 - 36, gy = 1000;  // ingranaggio in basso a destra
+    int ok = 0;
+    for (int p = 0; p < static_cast<int>(Page::Setup); ++p) {
+        if (lvgl_port_lock(-1)) { showPage(static_cast<Page>(p)); lvgl_port_unlock(); }
+        vTaskDelay(pdMS_TO_TICKS(300));
+        tap(gx, gy);
+        vTaskDelay(pdMS_TO_TICKS(300));
+        const Page a = debugCurrentPage();
+        tap(gx, gy);
+        vTaskDelay(pdMS_TO_TICKS(300));
+        const Page b = debugCurrentPage();
+        const bool good = a == Page::Setup && static_cast<int>(b) == p;
+        ok += good;
+        ESP_LOGW("TOUCH_TEST", "ingranaggio da pagina %d: -> %d -> %d %s", p, (int)a, (int)b, good ? "OK" : "ERRORE");
+    }
+    // da una sottopagina delle impostazioni: torna alla pagina di prima e chiude la sottopagina
+    if (lvgl_port_lock(-1)) { showPage(Page::Guida); lvgl_port_unlock(); }
+    tap(gx, gy);
+    vTaskDelay(pdMS_TO_TICKS(300));
+    tap(300, 134);   // "Collegamento"
+    vTaskDelay(pdMS_TO_TICKS(400));
+    tap(gx, gy);
+    vTaskDelay(pdMS_TO_TICKS(400));
+    ESP_LOGW("TOUCH_TEST", "ingranaggio da sottopagina: pagina %d (atteso 0), sottopagine %d (atteso 0) -> %d/5 pagine OK",
+             (int)debugCurrentPage(), settings_pages::debugDepth(), ok);
+}
+
 void task(void*) {
     vTaskDelay(pdMS_TO_TICKS(15000));
+    gear_test();
+    if (lvgl_port_lock(-1)) { showPage(Page::Guida); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(500));
+    dump(0);
     touch_tests();
     // Impostazioni: elenco categorie e ogni sottopagina (in alto e in fondo)
     if (lvgl_port_lock(-1)) { showPage(Page::Setup); lvgl_port_unlock(); }
