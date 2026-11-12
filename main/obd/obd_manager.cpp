@@ -277,7 +277,13 @@ void ObdManager::run() {
                 if (s.connection_mode == settings::ConnectionMode::WifiObd) {
                     active_stream_ = &wifi_;
                     auto& wm = abarth::wifi::WifiManager::instance();
-                    if (!wm.isConnected() && !s.saved_wifi_ssid.empty()) {
+                    if (!wm.isConnected() && s.saved_wifi_ssid.empty()) {
+                        // Nessuna rete del dongle salvata: non c'e' niente a cui collegarsi
+                        setLastError("WiFi OBD: nessuna rete salvata (collegati da Impostazioni)");
+                        processCommands(pdMS_TO_TICKS(3000));
+                        continue;
+                    }
+                    if (!wm.isConnected()) {
                         // All'avvio la rete del dongle non e' connessa: riconnetti
                         ESP_LOGI(TAG, "riconnessione alla rete WiFi salvata %s", s.saved_wifi_ssid.c_str());
                         wm.connect(s.saved_wifi_ssid, s.saved_wifi_pass, nullptr);

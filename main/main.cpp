@@ -98,6 +98,23 @@ extern "C" void app_main(void) {
 
     DIAG("step: settings init (NVS)");
     abarth::settings::init();
+    {
+        // Conta gli avvii consecutivi finiti con crash o watchdog, in qualunque
+        // punto. Dopo 2 di fila si torna a impostazioni sicure (UI Classica,
+        // OBD Bluetooth): una scelta salvata non puo' bloccare il display per sempre.
+        const esp_reset_reason_t rr = esp_reset_reason();
+        const bool crashed = rr == ESP_RST_PANIC || rr == ESP_RST_INT_WDT || rr == ESP_RST_TASK_WDT || rr == ESP_RST_WDT;
+        const uint8_t fails = crashed ? abarth::settings::bootFailCount() + 1 : 0;
+        abarth::settings::setBootFailCount(fails);
+        if (fails >= 2) {
+            DIAG("%u avvii falliti di fila: ripristino impostazioni sicure", fails);
+            abarth::settings::setUiStyle(abarth::settings::UiStyle::Classic);
+            abarth::settings::setUiV2Pending(false);
+            abarth::settings::setConnectionMode(abarth::settings::ConnectionMode::BleObd);
+            abarth::settings::setCanListenOnly(true);
+            abarth::settings::setBootFailCount(0);
+        }
+    }
     abarth::config::alerts().init();
     abarth::warmup::warmup_mgr().init();
 
@@ -187,20 +204,6 @@ extern "C" void app_main(void) {
     // Scelta interfaccia: Classica o v2 Racing, con ritorno automatico alla
     // Classica se la v2 si e' piantata nei primi 10 s dell'avvio precedente.
     bool use_v2 = abarth::settings::current().ui_style == abarth::settings::UiStyle::Racing;
-    {
-        // Conta gli avvii consecutivi finiti con crash o watchdog (in qualunque
-        // punto, anche prima della UI): dopo 2 di fila si torna alla Classica.
-        const esp_reset_reason_t rr = esp_reset_reason();
-        const bool crashed = rr == ESP_RST_PANIC || rr == ESP_RST_INT_WDT || rr == ESP_RST_TASK_WDT || rr == ESP_RST_WDT;
-        uint8_t fails = crashed ? abarth::settings::bootFailCount() + 1 : 0;
-        abarth::settings::setBootFailCount(fails);
-        if (use_v2 && fails >= 2) {
-            DIAG("%u avvii falliti di fila: torno alla UI Classica", fails);
-            abarth::settings::setUiStyle(abarth::settings::UiStyle::Classic);
-            abarth::settings::setUiV2Pending(false);
-            use_v2 = false;
-        }
-    }
     if (use_v2 && abarth::settings::isUiV2Pending()) {
         DIAG("UI v2 non confermata all'avvio precedente: torno alla UI Classica");
         abarth::settings::setUiStyle(abarth::settings::UiStyle::Classic);
@@ -250,6 +253,8 @@ extern "C" void app_main(void) {
         DIAG("firmware confermato valido (rollback annullato): %s", esp_err_to_name(rb));
     }
 
+    // Avvio completo: azzera il contatore (la UI v2 lo azzera anche dopo 10 s)
+    abarth::settings::setBootFailCount(0);
     DIAG("*** app_main completato ***");
     // app_main returns, tasks continue running in background.
 }

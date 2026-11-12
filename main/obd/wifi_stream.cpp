@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <cstring>
 #include "esp_timer.h"
+#include "wifi_manager.h"
 
 namespace abarth::obd {
 
@@ -47,6 +48,12 @@ bool WifiStream::begin(const WifiStreamConfig& cfg) {
 bool WifiStream::connect() {
     disconnect();
     if (!rx_buf_ || !rx_done_) return false;
+    // Senza rete WiFi lo stack TCP/IP puo' non essere inizializzato: socket()
+    // andrebbe in assert ("Invalid mbox") e il display entrerebbe in bootloop.
+    if (!abarth::wifi::WifiManager::instance().isConnected()) {
+        ESP_LOGW(TAG, "WiFi non connesso: nessun socket verso il dongle");
+        return false;
+    }
     xStreamBufferReset(rx_buf_);
 
     struct sockaddr_in dest_addr = {};
