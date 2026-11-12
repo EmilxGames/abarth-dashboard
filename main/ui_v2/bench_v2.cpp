@@ -11,7 +11,7 @@
 #include "lvgl.h"
 #include "display/lvgl_v8_port.h"
 #include "ui_v2/ui_v2.h"
-#include "ui_v2/page_setup.h"
+#include "ui_v2/settings_pages.h"
 
 namespace abarth::ui_v2::bench {
 namespace {
@@ -96,7 +96,7 @@ void task(void*) {
     // Scroll continuo della lista Impostazioni
     if (lvgl_port_lock(-1)) { showPage(Page::Setup); lvgl_port_unlock(); }
     vTaskDelay(pdMS_TO_TICKS(500));
-    lv_obj_t* list = setup_page::scrollTarget();
+    lv_obj_t* list = settings_pages::rootList();
     if (list) {
         const uint32_t f0 = lvgl_port_get_frame_count();
         const int64_t t0 = esp_timer_get_time();

@@ -14,6 +14,7 @@
 #include "display/lvgl_v8_port.h"
 #include "ui_v2/ui_v2.h"
 #include "ui_v2/page_personale.h"
+#include "ui_v2/settings_pages.h"
 
 namespace abarth::display { void* debugFramebuffer(); }
 
@@ -69,19 +70,19 @@ void dump(int idx) {
 
 void task(void*) {
     vTaskDelay(pdMS_TO_TICKS(15000));
-    for (int p = 0; p < static_cast<int>(Page::Count); ++p) {
-        for (int k = 0; k < 10; ++k) { fill_demo(); vTaskDelay(pdMS_TO_TICKS(100)); }
-        if (lvgl_port_lock(-1)) { showPage(static_cast<Page>(p)); lvgl_port_unlock(); }
-        for (int k = 0; k < 10; ++k) { fill_demo(); vTaskDelay(pdMS_TO_TICKS(100)); }
-        dump(p);
+    // Impostazioni: elenco categorie e ogni sottopagina (in alto e in fondo)
+    if (lvgl_port_lock(-1)) { showPage(Page::Setup); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(500));
+    dump(30);
+    for (int n = 0; n < 11; ++n) {
+        if (lvgl_port_lock(-1)) { settings_pages::debugOpen(n); lvgl_port_unlock(); }
+        for (int k = 0; k < 8; ++k) { fill_demo(); vTaskDelay(pdMS_TO_TICKS(100)); }
+        dump(40 + n * 2);
+        bool more = false;
+        if (lvgl_port_lock(-1)) { more = settings_pages::debugScrollBottom(); lvgl_port_unlock(); }
+        if (more) { vTaskDelay(pdMS_TO_TICKS(500)); dump(41 + n * 2); }
     }
-    // Editor della pagina PERSONALE: modifica e elenco grandezze
-    for (int mode = 1; mode <= 2; ++mode) {
-        if (lvgl_port_lock(-1)) { showPage(Page::Personale); personale::debugMode(mode); lvgl_port_unlock(); }
-        for (int k = 0; k < 10; ++k) { fill_demo(); vTaskDelay(pdMS_TO_TICKS(100)); }
-        dump(10 + mode);
-    }
-    if (lvgl_port_lock(-1)) { personale::debugMode(0); showPage(Page::Guida); lvgl_port_unlock(); }
+    if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); showPage(Page::Guida); lvgl_port_unlock(); }
     vTaskDelete(nullptr);
 }
 }  // namespace

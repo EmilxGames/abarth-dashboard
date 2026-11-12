@@ -14,12 +14,14 @@
 #include "ui/ui.h"
 #include "ui_v2/page_personale.h"
 #include "ui_v2/pages.h"
+#include "ui_v2/settings_pages.h"
 #include "ui_v2/data_fmt.h"
 #include "ui_v2/theme.h"
 #include "ui_v2/widgets.h"
 
 namespace abarth::ui_v2 {
 namespace debug_shot { void start(); }
+void markBuilt();
 namespace bench { void start(); }
 
 namespace {
@@ -91,7 +93,7 @@ void on_timer(lv_timer_t*) {
 }
 
 void gesture_cb(lv_event_t*) {
-    if (personale::editing()) return;  // nell'editor lo swipe non cambia pagina
+    if (personale::editing() || settings_pages::inSubPage()) return;  // editor/sottopagine: niente swipe
     const lv_dir_t d = lv_indev_get_gesture_dir(lv_indev_active());
     const int cur = static_cast<int>(g_current);
     if (d == LV_DIR_LEFT && cur < kPages - 1) showPage(static_cast<Page>(cur + 1));
@@ -161,6 +163,7 @@ void build() {
     update_status();
     lv_timer_create(on_timer, 50, nullptr);  // 20 Hz: si ridisegna solo cio' che cambia
     lv_scr_load(g_scr);
+    markBuilt();   // da qui gli allarmi usano il banner Moderno
     debug_shot::start();
     bench::start();
     ESP_LOGI(TAG, "UI v2 Moderno costruita (%ldx%ld)", (long)W, (long)H);

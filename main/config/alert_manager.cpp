@@ -1,4 +1,5 @@
 #include "config/alert_manager.h"
+#include "ui_v2/alert_banner.h"
 
 #include <cstdio>
 #include <cstring>
@@ -74,6 +75,24 @@ void auto_close_timer_cb(lv_timer_t* /*tmr*/) {
     } else {
         close_alert_popup();
     }
+}
+
+// --- Banner nello stile Moderno (UI v2) --------------------------------------
+// Se la UI Moderno e' attiva costruisce il banner nuovo nell'host gia' creato,
+// avvia il conto alla rovescia, rilascia il lock e ritorna true.
+bool v2_alert(const std::string& title, const std::string& msg, abarth::ui_v2::AlertLevel lvl,
+              uint8_t auto_close_sec, const char* ok_label) {
+    if (!abarth::ui_v2::alertBannerActive()) return false;
+    abarth::ui_v2::buildAlertBanner(g_alert_modal, title.c_str(), msg.c_str(), lvl, ok_label,
+                                    auto_close_sec > 0, &g_timer_lbl, [](lv_event_t*) { close_alert_popup(); });
+    if (auto_close_sec > 0) {
+        g_bar_indicator = nullptr;
+        g_remaining_ticks = auto_close_sec * 10;
+        g_total_ticks = g_remaining_ticks;
+        g_auto_close_timer = lv_timer_create(auto_close_timer_cb, 100, nullptr);
+    }
+    lvgl_port_unlock();
+    return true;
 }
 } // namespace
 
@@ -468,6 +487,28 @@ void AlertManager::triggerAlertPopup(const AlertRule& rule, float val1, float va
 
     /* Backdrop oscurato sul top layer LVGL */
     g_alert_modal = make_alert_banner_host();
+    {
+        using abarth::ui_v2::AlertLevel;
+        char m[200];
+        AlertLevel lv = AlertLevel::Critical;
+        switch (rule.type) {
+            case AlertType::ColdEngineRpm:
+                std::snprintf(m, sizeof(m), "%.0f giri con acqua a %.0f \xC2\xB0" "C. Tieni basso il regime finch\xC3\xA9 il motore non \xC3\xA8 in temperatura.", val1, val2);
+                lv = AlertLevel::Warning; break;
+            case AlertType::HighCoolantTemp:
+                std::snprintf(m, sizeof(m), "Acqua a %.0f \xC2\xB0" "C (soglia %.0f \xC2\xB0" "C). Rallenta e controlla il raffreddamento.", val1, rule.threshold1); break;
+            case AlertType::HighOilTemp:
+                std::snprintf(m, sizeof(m), "Olio a %.0f \xC2\xB0" "C (soglia %.0f \xC2\xB0" "C). Fai raffreddare il motore a basso regime.", val1, rule.threshold1); break;
+            case AlertType::HighBoostPressure:
+                std::snprintf(m, sizeof(m), "Turbo a %.2f bar (soglia %.2f bar).", val1, rule.threshold1); break;
+            case AlertType::LowBatteryVoltage:
+                std::snprintf(m, sizeof(m), "Batteria a %.1f V (minimo %.1f V).", val1, rule.threshold1);
+                lv = AlertLevel::Warning; break;
+            default:
+                std::snprintf(m, sizeof(m), "%s", rule.description.c_str());
+        }
+        if (v2_alert((is_test ? "[Prova] " : "") + rule.name, m, lv, rule.auto_close_sec, "OK")) return;
+    }
 
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
     const int popup_w = is_portrait ? 520 : 560;
@@ -625,6 +666,11 @@ void AlertManager::triggerCustomAlertPopup(const CustomAlertRule& rule, float va
     }
 
     g_alert_modal = make_alert_banner_host();
+    {
+        char m[200];
+        std::snprintf(m, sizeof(m), "%s\nValore %.1f \xC2\xB7 soglia %.1f", rule.custom_text.c_str(), val, rule.threshold);
+        if (v2_alert((is_test ? "[Prova] " : "") + rule.name, m, abarth::ui_v2::AlertLevel::Warning, rule.auto_close_sec, "OK")) return;
+    }
 
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
     const int popup_w = is_portrait ? 520 : 560;
@@ -752,6 +798,16 @@ void AlertManager::triggerColdEngineWarmupAlert(float rpm, float water_temp, uin
     }
 
     g_alert_modal = make_alert_banner_host();
+    {
+        char m[200];
+        if (is_warming) {
+            std::snprintf(m, sizeof(m), "%.0f giri con l'olio ancora freddo. Mancano circa %02d:%02d al riscaldamento: evita il pieno carico.",
+                          rpm, remaining_sec / 60, remaining_sec % 60);
+        } else {
+            std::snprintf(m, sizeof(m), "%.0f giri con acqua a %.0f \xC2\xB0" "C: olio ancora denso, tieni basso il regime.", rpm, water_temp);
+        }
+        if (v2_alert(is_test ? "[Prova] Motore freddo" : "Motore freddo", m, abarth::ui_v2::AlertLevel::Warning, 6, "OK")) return;
+    }
 
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
     const int popup_w = is_portrait ? 520 : 560;
@@ -881,6 +937,8 @@ void AlertManager::triggerWarmupCompleteAlert(bool is_test) {
     }
 
     g_alert_modal = make_alert_banner_host();
+    if (v2_alert(is_test ? "[Prova] Motore in temperatura" : "Motore in temperatura",
+                 "Acqua e olio sono a regime: il motore \xC3\xA8 pronto. Buona guida.", abarth::ui_v2::AlertLevel::Info, 7, "OK")) return;
 
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
     const int popup_w = is_portrait ? 520 : 560;
