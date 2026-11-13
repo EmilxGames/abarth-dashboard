@@ -251,8 +251,28 @@ void warmup_shots() {
     warmup::warmup_mgr().resetCycle();
 }
 
+void schema_shots() {
+    // pagina "Schema collegamenti" (categoria 2) dall'alto in fondo, a passi
+    if (lvgl_port_lock(-1)) { showPage(Page::Setup); settings_pages::debugOpen(2); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(600));
+    for (int k = 0; k < 6; ++k) {
+        dump(90 + k);
+        bool more = false;
+        if (lvgl_port_lock(-1)) {
+            lv_obj_t* l = settings_pages::debugTopList();
+            more = l && lv_obj_get_scroll_bottom(l) > 0;
+            if (more) lv_obj_scroll_by_bounded(l, 0, -640, LV_ANIM_OFF);
+            lvgl_port_unlock();
+        }
+        if (!more) break;
+        vTaskDelay(pdMS_TO_TICKS(400));
+    }
+    if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); showPage(Page::Guida); lvgl_port_unlock(); }
+}
+
 void task(void*) {
     vTaskDelay(pdMS_TO_TICKS(15000));
+    schema_shots();
     page_tests();
     gear_test();
     if (lvgl_port_lock(-1)) { showPage(Page::Guida); lvgl_port_unlock(); }

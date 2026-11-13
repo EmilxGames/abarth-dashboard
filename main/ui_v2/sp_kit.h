@@ -40,6 +40,10 @@ void rowValue(lv_obj_t* list, const char* title, TextFn value, Fn on_tap = nullp
 void rowToggle(lv_obj_t* list, const char* title, std::function<bool()> get, std::function<void(bool)> set);
 void rowStepper(lv_obj_t* list, const char* title, TextFn value, Fn minus, Fn plus);
 void rowAction(lv_obj_t* list, const char* title, Fn on_tap, bool destructive = false);
+/// Riga libera di altezza h nella scheda corrente, per contenuti disegnati a mano
+/// (statici); larghezza = rowWidth()
+lv_obj_t* rowCustom(lv_obj_t* list, int32_t h);
+int32_t rowWidth();
 /// Testo su piu' righe aggiornato periodicamente
 void rowInfo(lv_obj_t* list, TextFn text);
 /// Slider 0..100 (anteprima durante il trascinamento, commit al rilascio)

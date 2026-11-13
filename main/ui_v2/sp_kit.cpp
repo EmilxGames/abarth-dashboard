@@ -283,6 +283,13 @@ void rowAction(lv_obj_t* list, const char* title, Fn on_tap, bool destructive) {
     p->rows.push_back(std::move(r));
 }
 
+lv_obj_t* rowCustom(lv_obj_t* list, int32_t h) {
+    Page* p = page_of(list);
+    return p ? add_row(p, h, false) : nullptr;
+}
+
+int32_t rowWidth() { return cw(); }
+
 void rowInfo(lv_obj_t* list, TextFn text) {
     Page* p = page_of(list);
     if (!p) return;

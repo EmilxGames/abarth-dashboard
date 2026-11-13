@@ -8,7 +8,7 @@ BIN=/tmp/ttf2lvgl_$$
 swiftc -O tools/ttf2lvgl.swift -o "$BIN"
 F=fonts/manrope
 ASCII=$(printf '%s' ' !"#$%&'"'"'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~')
-EXTRA='°·−–≤àèéìòùÀÈÉÌÒÙ’'
+EXTRA='°·−–≤àèéìòùÀÈÉÌÒÙ’→←Ω'
 FULL="$ASCII$EXTRA"
 "$BIN" $F/Manrope-Light.ttf   228 manrope_hero_228   '0123456789–' $OUT/manrope_hero_228.c 1 "" 1
 "$BIN" $F/Manrope-Regular.ttf 75  manrope_value_75   '0123456789.−–+' $OUT/manrope_value_75.c 0 "" 1

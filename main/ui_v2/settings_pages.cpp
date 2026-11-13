@@ -31,6 +31,7 @@
 #include "ui_v2/metric_info.h"
 #include "ui_v2/sp_kit.h"
 #include "ui_v2/theme.h"
+#include "ui_v2/widgets.h"
 #include "wifi_manager.h"
 
 namespace abarth::ui_v2::settings_pages {
@@ -38,6 +39,7 @@ namespace abarth::ui_v2::settings_pages {
 namespace {
 using namespace abarth::settings;
 using std::string;
+using namespace theme;
 lv_obj_t* g_root = nullptr;
 
 string fmt(const char* f, ...) __attribute__((format(printf, 1, 2)));
@@ -183,6 +185,128 @@ string can_diag(uint8_t b) {
                (unsigned long)c.txFrames(b), (unsigned long)c.busErrors(b), e.empty() ? "nessuno" : e.c_str());
 }
 
+// =========================================================== SCHEMA COLLEGAMENTI
+// Pagina statica: niente si aggiorna, si disegna una volta all'apertura.
+struct Wire { const char* from; bool to_module; const char* to; };
+
+constexpr int32_t kWireRowH = 44;
+constexpr int32_t kColFrom = kCardPad;         ///< lato sinistro
+constexpr int32_t kColArrow = 254;             ///< freccia (direzione del segnale)
+constexpr int32_t kColTo = 306;                ///< lato destro
+
+/// Blocco a due colonne: intestazioni, righe "da → a" e una nota opzionale
+void wire_block(lv_obj_t* list, const char* head_l, const char* head_r, const Wire* rows, int n, const char* note) {
+    int32_t note_h = 0;
+    if (note) {
+        lv_point_t sz;
+        lv_text_get_size(&sz, note, fontLabel(), 0, 4, sp::rowWidth() - 2 * kCardPad, LV_TEXT_FLAG_NONE);
+        note_h = sz.y + 12;
+    }
+    lv_obj_t* r = sp::rowCustom(list, 58 + n * kWireRowH + note_h + 18);
+    if (!r) return;
+    const int32_t lh = lv_font_get_line_height(fontUnit());
+    lv_obj_t* h = w::label(r, head_l, fontLabel(), kDim, true);
+    lv_obj_set_pos(h, kColFrom, 22);
+    h = w::label(r, head_r, fontLabel(), kDim, true);
+    lv_obj_set_pos(h, kColTo, 22);
+    for (int i = 0; i < n; ++i) {
+        const int32_t y = 58 + i * kWireRowH + (kWireRowH - lh) / 2;
+        lv_obj_t* a = w::label(r, rows[i].from, fontUnit(), kText);
+        lv_obj_set_pos(a, kColFrom, y);
+        if (rows[i].to[0]) {
+            lv_obj_t* ar = w::label(r, rows[i].to_module ? "\xE2\x86\x92" : "\xE2\x86\x90", fontUnit(), accent());
+            lv_obj_set_pos(ar, kColArrow, y);
+        }
+        lv_obj_t* b = w::label(r, rows[i].to[0] ? rows[i].to : "non usato", fontUnit(), rows[i].to[0] ? kText : kDim);
+        lv_obj_set_pos(b, kColTo, y);
+    }
+    if (note) {
+        lv_obj_t* nl = w::label(r, note, fontLabel(), kSecondary);
+        lv_label_set_long_mode(nl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_line_space(nl, 4, 0);
+        lv_obj_set_width(nl, sp::rowWidth() - 2 * kCardPad);
+        lv_obj_set_pos(nl, kColFrom, 58 + n * kWireRowH + 10);
+    }
+}
+
+/// Presa OBD-II vista di fronte (in auto): 1-8 sopra, 9-16 sotto; i pin usati nel colore accento
+void obd_socket(lv_obj_t* list) {
+    constexpr int32_t kH = 232;
+    lv_obj_t* r = sp::rowCustom(list, kH);
+    if (!r) return;
+    const int32_t W = sp::rowWidth();
+    // contorno trapezoidale (piu' largo in alto, come la presa vera)
+    static lv_point_precise_t pts[5];
+    const int32_t x0 = 40, x1 = W - 40, y0 = 26, y1 = 160, inset = 26;
+    pts[0] = {x0, y0}; pts[1] = {x1, y0}; pts[2] = {x1 - inset, y1}; pts[3] = {x0 + inset, y1}; pts[4] = {x0, y0};
+    lv_obj_t* ln = lv_line_create(r);
+    lv_line_set_points(ln, pts, 5);
+    lv_obj_set_style_line_width(ln, 2, 0);
+    lv_obj_set_style_line_color(ln, c(kTrack), 0);
+    lv_obj_set_style_line_rounded(ln, true, 0);
+    constexpr int32_t kPin = 40, kPinGap = 11;
+    const int32_t px0 = (W - (8 * kPin + 7 * kPinGap)) / 2;
+    for (int i = 0; i < 16; ++i) {
+        const int n = i + 1;
+        const bool used = n == 1 || n == 4 || n == 5 || n == 6 || n == 9 || n == 14;
+        const int32_t x = px0 + (i % 8) * (kPin + kPinGap);
+        const int32_t y = i < 8 ? y0 + 16 : y0 + 16 + kPin + 22;
+        lv_obj_t* p = w::box(r, x, y, kPin, kPin, used ? accent() : kCard, 10);
+        if (!used) {
+            lv_obj_set_style_border_width(p, 2, 0);
+            lv_obj_set_style_border_color(p, c(kTrack), 0);
+        }
+        char num[4];
+        std::snprintf(num, sizeof(num), "%d", n);
+        lv_obj_t* nl = w::label(p, num, fontLabel(), used ? kText : kDim);
+        lv_obj_center(nl);
+    }
+    // legenda su tre colonne fisse
+    static const char* const kLegend[3][2] = {{"6 \xC2\xB7 14", "C-CAN"}, {"1 \xC2\xB7 9", "B-CAN"}, {"4 \xC2\xB7 5", "massa"}};
+    for (int i = 0; i < 3; ++i) {
+        const int32_t lx = kCardPad + i * ((W - 2 * kCardPad) / 3);
+        lv_obj_t* a = w::label(r, kLegend[i][0], fontLabel(), kText);
+        lv_obj_set_pos(a, lx, y1 + 24);
+        lv_obj_t* b = w::label(r, kLegend[i][1], fontLabel(), kSecondary);
+        lv_obj_set_pos(b, lx + w::textWidth(kLegend[i][0], fontLabel()) + 10, y1 + 24);
+    }
+}
+
+void page_schema() {
+    lv_obj_t* l = sp::push("Schema collegamenti");
+    const auto s = current();
+    char tx1[16], rx1[16], tx2[16], rx2[16], h1[48], h2[64];
+    std::snprintf(tx1, sizeof(tx1), "GPIO %u", s.can1_tx_pin);
+    std::snprintf(rx1, sizeof(rx1), "GPIO %u", s.can1_rx_pin);
+    std::snprintf(tx2, sizeof(tx2), "GPIO %u", s.can2_tx_pin);
+    std::snprintf(rx2, sizeof(rx2), "GPIO %u", s.can2_rx_pin);
+    std::snprintf(h1, sizeof(h1), "CAN MOTORE (C-CAN) \xC2\xB7 %lu KBIT/S", (unsigned long)(s.can1_baud_rate / 1000));
+    std::snprintf(h2, sizeof(h2), "CAN CARROZZERIA (B-CAN) \xC2\xB7 %lu KBIT/S", (unsigned long)(s.can2_baud_rate / 1000));
+
+    sp::section(l, "PRESA OBD-II \xC2\xB7 VISTA DI FRONTE");
+    obd_socket(l);
+
+    // Modulo 1: WeAct ISOCANFD (CA-IS2062A, isolato)
+    sp::section(l, h1);
+    const Wire d1[] = {{tx1, true, "TXD"}, {rx1, false, "RXD"}, {"5 V", true, "VDDP (5V)"},
+                       {"3,3 V", true, "VDDL (3V3)"}, {"GND", true, "GND"}};
+    wire_block(l, "DISPLAY", "MODULO 1", d1, 5, "Servono sia 5 V sia 3,3 V: senza 5 V il lato CAN del modulo resta spento.");
+    const Wire o1[] = {{"CAN-H", true, "pin 6"}, {"CAN-L", true, "pin 14"}, {"GND", true, "pin 4 / 5"}};
+    wire_block(l, "MODULO 1", "PRESA OBD", o1, 3, "Jumper 120 \xCE\xA9 sul modulo: lasciare aperto (la terminazione c'\xC3\xA8 gi\xC3\xA0 in auto).");
+
+    // Modulo 2: stessa struttura, rete carrozzeria (solo ascolto)
+    sp::section(l, h2);
+    const Wire d2[] = {{tx2, true, "TXD"}, {rx2, false, "RXD"}, {"5 V", true, "VDDP (5V)"},
+                       {"3,3 V", true, "VDDL (3V3)"}, {"GND", true, "GND"}};
+    wire_block(l, "DISPLAY", "MODULO 2", d2, 5, "Rete carrozzeria: il display la legge soltanto.");
+    const Wire o2[] = {{"CAN-H", true, "pin 1"}, {"CAN-L", true, "pin 9"}, {"GND", true, "pin 4 / 5"}};
+    wire_block(l, "MODULO 2", "PRESA OBD", o2, 3, "Jumper 120 \xCE\xA9 sul modulo: lasciare aperto.");
+
+    sp::section(l, "ALIMENTAZIONE");
+    const Wire pw[] = {{"Presa USB auto", true, "USB-C display"}, {"Pin 16 \xC2\xB7 +12 V", true, ""}};
+    wire_block(l, "DA", "A", pw, 2, "5 V dalla presa USB dell'auto: si spegne 1\xE2\x80\x93" "2 minuti dopo aver spento il motore.");
+}
+
 void page_can() {
     lv_obj_t* l = sp::push("CAN diretto");
     sp::section(l, "C-CAN MOTORE (CAN 1)");
@@ -223,12 +347,7 @@ void page_can() {
                       "traffico valido, le sospende a quadro spento e torna in ascolto dopo 3 bus-off.");
     });
     sp::section(l, "COLLEGAMENTI");
-    sp::rowInfo(l, []() {
-        const auto s = current();
-        return fmt("C-CAN: TX GPIO%u, RX GPIO%u -> pin OBD 6 (H) / 14 (L)\nB-CAN: TX GPIO%u, RX GPIO%u -> pin OBD 1 / 9\n"
-                   "Moduli WeAct ISOCANFD (CA-IS2062A), massa comune pin 4/5.",
-                   s.can1_tx_pin, s.can1_rx_pin, s.can2_tx_pin, s.can2_rx_pin);
-    });
+    sp::rowNav(l, "Vedi schema collegamenti", nullptr, []() { page_schema(); });
 }
 
 // =========================================================== DISPLAY
@@ -646,6 +765,7 @@ struct Cat { const char* name; void (*open)(); };
 const Cat kCats[] = {
     {"Collegamento", page_collegamento},
     {"CAN diretto", page_can},
+    {"Schema collegamenti", page_schema},
     {"Display", page_display},
     {"Unit\xC3\xA0 di misura", page_unita},
     {"Allarmi", page_allarmi},
