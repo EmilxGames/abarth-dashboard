@@ -5,6 +5,7 @@
 extern "C" {
 LV_FONT_DECLARE(manrope_hero_228);
 LV_FONT_DECLARE(manrope_value_75);
+LV_FONT_DECLARE(manrope_value_48);
 LV_FONT_DECLARE(manrope_medium_32);
 LV_FONT_DECLARE(manrope_unit_22);
 LV_FONT_DECLARE(manrope_label_17);
@@ -23,6 +24,7 @@ uint32_t accent() {
 
 const lv_font_t* fontHero()   { return &manrope_hero_228; }
 const lv_font_t* fontValue()  { return &manrope_value_75; }
+const lv_font_t* fontValueSmall() { return &manrope_value_48; }
 const lv_font_t* fontMedium() { return &manrope_medium_32; }
 const lv_font_t* fontUnit()   { return &manrope_unit_22; }
 const lv_font_t* fontLabel()  { return &manrope_label_17; }

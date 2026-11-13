@@ -626,6 +626,8 @@ void page_sistema() {
 }
 
 // =========================================================== MANOMETRI CLASSICA
+// (non piu' nell'elenco della UI Moderno: resta nelle Impostazioni della Classica)
+[[maybe_unused]]
 void page_manometri() {
     lv_obj_t* l = sp::push("Manometri (Classica)");
     sp::section(l, "SCHEDA PERSONALIZZATA");
@@ -652,7 +654,6 @@ const Cat kCats[] = {
     {"MicroSD e log", page_sd},
     {"Web Server", page_web},
     {"Sistema", page_sistema},
-    {"Manometri (Classica)", page_manometri},
 };
 }  // namespace
 
@@ -678,6 +679,7 @@ void closeSubPages() { sp::popAll(); }
 lv_obj_t* rootList() { return g_root; }
 int debugDepth() { return sp::depth(); }
 lv_obj_t* debugTopList() { return sp::topList(); }
+int debugCategoryCount() { return static_cast<int>(sizeof(kCats) / sizeof(kCats[0])); }
 bool debugScrollBottom() {
     lv_obj_t* l = sp::topList();
     if (!l || lv_obj_get_scroll_bottom(l) <= 0) return false;

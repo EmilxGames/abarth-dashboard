@@ -10,6 +10,10 @@ void update(int64_t now_ms);
 bool editing();
 /// Solo debug/screenshot: 0 = esci, 1 = editor con scheda 3 selezionata, 2 = elenco grandezze
 void debugMode(int mode);
-/// Solo test: tipo di widget salvato nello slot s
+/// Solo test: tipo di widget della scheda s, numero di schede, oggetti da toccare
 int debugSlotType(int s);
+int debugCardCount();
+lv_obj_t* debugPencil();
+lv_obj_t* debugSheetButton(int i);
+lv_obj_t* debugGrid();
 }

@@ -1,68 +1,74 @@
 #pragma once
 /**
  * @file custom_layout.h
- * @brief Modello della pagina PERSONALE: griglia fissa di slot configurabili.
+ * @brief Modello della pagina PERSONALE (versione 2): elenco ordinato di schede
+ *        su una griglia fine di 4 colonne, disposte in ordine "riempiendo i buchi";
+ *        la pagina scorre in verticale se le schede non ci stanno.
  *
- * Griglia 2 colonne x 4 righe (8 slot, indice = riga*2 + colonna).
- * Ogni slot: grandezza (o vuoto), tipo di widget, larghezza (1 o 2 colonne).
- * Uno slot largo (span 2) puo' stare solo nella colonna 0 e "copre" lo slot
- * a destra, che deve restare vuoto.
- * Salvato in NVS come blob versionato; se non valido si usa il layout di default.
- * Questo file non dipende dallo stile grafico.
+ * Dimensioni: larghezza 1, 2 o 4 colonne (1/4, 1/2, intera) e altezza 1 o 2
+ * righe (bassa, alta). Es.: 0.25x = 1/4 bassa, 0.5x = 1/2 bassa,
+ * 1x = 1/2 alta (scheda normale), 2x = intera alta.
+ * Salvato in NVS come blob versionato; il formato v1 (griglia 2x4) viene
+ * convertito automaticamente. Questo file non dipende dallo stile grafico.
  */
 #include <cstdint>
 
 namespace abarth::ui_v2::custom {
 
-constexpr int kCols = 2;
-constexpr int kRows = 4;
-constexpr int kSlots = kCols * kRows;
-constexpr uint8_t kEmpty = 0xFF;        ///< slot senza grandezza
-constexpr uint8_t kLayoutVersion = 1;
+constexpr int kCols = 4;                 ///< colonne della griglia fine
+constexpr int kMaxCards = 32;
+constexpr int kMaxRows = 64;             ///< righe massime della griglia fine
+constexpr uint8_t kEmpty = 0xFF;
+constexpr uint8_t kLayoutVersion = 2;
 
 enum class WidgetType : uint8_t {
-    BigNumber = 0,   ///< numero grande
-    NumberBar = 1,   ///< numero + barra orizzontale
-    PeakMinMax = 2,  ///< valore con minimo e massimo della sessione
+    BigNumber = 0,   ///< numero
+    NumberBar = 1,   ///< numero + barra
+    PeakMinMax = 2,  ///< valore con minimo e massimo di sessione
     Count
 };
 
-struct Slot {
-    uint8_t metric = kEmpty;   ///< valore di data::Metric o kEmpty
-    uint8_t type = 0;          ///< WidgetType
-    uint8_t span = 1;          ///< 1 = una colonna, 2 = riga intera
-    uint8_t reserved = 0;
+struct Card {
+    uint8_t metric = 0;     ///< data::Metric
+    uint8_t type = 0;       ///< WidgetType
+    uint8_t cols = 2;       ///< larghezza in colonne: 1, 2, 4
+    uint8_t rows = 2;       ///< altezza in righe: 1, 2
 };
 
 struct Layout {
     uint8_t version = kLayoutVersion;
-    uint8_t reserved[3] = {};   ///< [0] = suggerimento PERSONALE gia' visto
-    Slot    slots[kSlots];
+    uint8_t count = 0;      ///< schede usate
+    uint8_t flags = 0;      ///< bit0 = suggerimento PERSONALE gia' visto
+    uint8_t reserved = 0;
+    Card    cards[kMaxCards];
 };
 
-/// Layout iniziale proposto (giri, velocita', turbo, acqua, olio, batteria...)
-Layout defaultLayout();
+struct Placement { uint8_t col, row, cols, rows; };
 
-/// Controlla coerenza (versione, grandezze esistenti, tipi, span). Corregge
-/// solo se `fix` e' true; ritorna true se il layout era gia' valido.
+/// Disposizione: prima posizione libera in ordine di lettura per ogni scheda.
+/// Ritorna il numero di righe usate.
+int pack(const Layout& l, Placement out[kMaxCards]);
+
+Layout defaultLayout();
+/// Coerenza (versione, grandezze, tipi, dimensioni, numero). Con fix=true corregge.
 bool validate(Layout& l, bool fix);
 
-// --- Operazioni dell'editor (pure, verificabili su PC) ----------------------
-/// Assegna una grandezza (o kEmpty) a uno slot. Ignora gli slot coperti.
-bool setMetric(Layout& l, int slot, uint8_t metric);
-/// Cambia il tipo di widget.
-bool setType(Layout& l, int slot, WidgetType t);
-/// Cambia larghezza: span 2 solo in colonna 0; svuota lo slot a destra.
-bool setSpan(Layout& l, int slot, uint8_t span);
-/// Scambia il contenuto di due slot rispettando i vincoli di larghezza.
+// --- Operazioni dell'editor ---------------------------------------------------
+int  add(Layout& l, uint8_t metric, WidgetType t, uint8_t cols, uint8_t rows);   ///< indice o -1 se pieno
+bool remove(Layout& l, int i);
+bool setMetric(Layout& l, int i, uint8_t metric);
+bool setType(Layout& l, int i, WidgetType t);
+bool setSize(Layout& l, int i, uint8_t cols, uint8_t rows);
+/// Tipi consentiti per dimensione: barra e min/max solo da meta' larghezza in su
+bool typeAllowed(uint8_t cols, uint8_t rows, WidgetType t);
 bool swap(Layout& l, int a, int b);
-/// true se lo slot e' coperto da uno slot largo alla sua sinistra.
-bool isCovered(const Layout& l, int slot);
 
-// --- Persistenza (solo su ESP32) --------------------------------------------
-/// Carica da NVS; se manca o non e' valido ritorna il default.
+/// Converte un layout della versione 1 (griglia 2x4 da 8 slot, blob da 36 byte):
+/// 1x -> 1/2 alta, 2x -> intera alta
+bool migrateV1(const uint8_t* blob, int len, Layout& out);
+
+// --- Persistenza (solo su ESP32) ----------------------------------------------
 Layout load();
-/// Salva in NVS (da chiamare solo all'uscita dall'editor).
 bool save(const Layout& l);
 
 }  // namespace abarth::ui_v2::custom

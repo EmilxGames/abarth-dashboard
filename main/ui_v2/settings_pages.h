@@ -18,4 +18,5 @@ void debugOpen(int n);
 bool debugScrollBottom();
 int debugDepth();
 lv_obj_t* debugTopList();
+int debugCategoryCount();
 }

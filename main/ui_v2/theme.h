@@ -47,11 +47,15 @@ constexpr int32_t kDotsY     = 1000; ///< indicatore pagina (centro)
 constexpr int32_t kPillH     = 13;   ///< barra a pillola
 constexpr int32_t kStatusDot = 12;   ///< pallino stato scheda
 constexpr int32_t kRowH      = 72;   ///< righe impostazioni
+// Griglia della pagina PERSONALE: 4 colonne, righe da ~104 px
+constexpr int32_t kGridGap   = 12;
+constexpr int32_t kGridRowH  = 104;
 
 // --- Font (ruoli) -------------------------------------------------------------
 // Provvisori Montserrat finche' non c'e' Manrope generato con lv_font_conv.
 const lv_font_t* fontHero();      ///< cifre principali (~228 px, peso 300)
 const lv_font_t* fontValue();     ///< valori schede (75 px, peso 400)
+const lv_font_t* fontValueSmall();///< valori schede basse (48 px, peso 400)
 const lv_font_t* fontMedium();    ///< valori medi (32 px, peso 500)
 const lv_font_t* fontUnit();      ///< unita' (22 px, peso 500)
 const lv_font_t* fontLabel();     ///< etichette MAIUSCOLE (17 px, peso 500)
