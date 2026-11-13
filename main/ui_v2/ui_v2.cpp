@@ -66,6 +66,7 @@ constexpr uint32_t kIce = 0x7FD4FF; ///< azzurro ghiaccio: freddo
 lv_timer_t* g_title_timer = nullptr;
 const char* const kPageNames[] = {"GUIDA", "TEMPERATURE", "PRESSIONI", "ELETTRICO", "PERSONALE", "IMPOSTAZIONI"};
 constexpr int32_t kGearW = 72;   ///< pulsante rapido Impostazioni in basso a destra
+lv_obj_t* g_hint = nullptr;      ///< suggerimento dell'editor PERSONALE al posto dei pallini
 constexpr int32_t kGearH = 48;   ///< + 8 px di area extra per lato = tocco 88x64
 Page g_before_setup = Page::Guida;
 
@@ -260,6 +261,7 @@ void gear_cb(lv_event_t*) {
 
 void dots_tap_cb(lv_event_t* e) {
     // tocco nella fascia in basso: meta' sinistra = indietro, destra = avanti
+    if (personale::editing()) return;
     lv_point_t p;
     lv_indev_get_point(lv_indev_active(), &p);
     const int cur = static_cast<int>(g_current);
@@ -281,7 +283,24 @@ void showPage(Page p) {
     g_current = p;
     layout_dots();
     if (g_title) show_title(idx);
+    personale::setPencilVisible(p == Page::Personale);
     pages::onShow(p);
+}
+
+void setBottomHint(const char* txt) {
+    if (!g_hint) return;
+    const bool on = txt != nullptr;
+    for (auto* d : g_dots) {
+        if (!d) continue;
+        if (on) lv_obj_add_flag(d, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_remove_flag(d, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (on) {
+        lv_label_set_text(g_hint, txt);
+        lv_obj_remove_flag(g_hint, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(g_hint, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void build() {
@@ -354,7 +373,9 @@ void build() {
     g_dots_x0 = (W - dots_w) / 2;
     // fascia dei pallini: toccabile solo fino all'ingranaggio, cosi' un tocco
     // sull'ingranaggio apre soltanto le Impostazioni
-    lv_obj_t* tap = w::box(g_scr, 0, kPageBottom, W - kGearW - 24, H - kPageBottom, kBg);
+    // a destra: matita di PERSONALE e ingranaggio (la fascia si ferma prima)
+    const int32_t pencil_x = W - 12 - kGearW - 8 - kGearW;
+    lv_obj_t* tap = w::box(g_scr, 0, kPageBottom, pencil_x - 16, H - kPageBottom, kBg);
     lv_obj_add_flag(tap, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(tap, dots_tap_cb, LV_EVENT_CLICKED, nullptr);
     for (int i = 0; i < kPages; ++i) g_dots[i] = w::box(g_scr, 0, 0, kDot, kDot, kDotIdle, kDot / 2);
@@ -369,6 +390,12 @@ void build() {
     lv_obj_t* gl = w::label(gear, LV_SYMBOL_SETTINGS, &lv_font_montserrat_30, kSecondary);
     lv_obj_center(gl);
     lv_obj_add_event_cb(gear, gear_cb, LV_EVENT_CLICKED, nullptr);
+
+    // Matita di PERSONALE subito a sinistra dell'ingranaggio, stessa forma
+    personale::buildPencil(g_scr, pencil_x, kDotsY - kGearH / 2, kGearW, kGearH);
+    g_hint = w::label(g_scr, "", fontLabel(), kSecondary);
+    lv_obj_set_pos(g_hint, kMargin, kDotsY - lv_font_get_line_height(fontLabel()) / 2);
+    lv_obj_add_flag(g_hint, LV_OBJ_FLAG_HIDDEN);
 
     showPage(Page::Guida);
     update_status();

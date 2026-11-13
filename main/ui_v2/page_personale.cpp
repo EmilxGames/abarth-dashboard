@@ -16,6 +16,7 @@
 #include "ui_v2/metric_info.h"
 #include "ui_v2/page_personale.h"
 #include "ui_v2/theme.h"
+#include "ui_v2/ui_v2.h"
 #include "ui_v2/widgets.h"
 
 namespace abarth::ui_v2::personale {
@@ -25,7 +26,6 @@ using namespace theme;
 using custom::kMaxCards;
 using custom::WidgetType;
 
-constexpr int32_t kHeadH = 64;     ///< riga in alto: suggerimento + matita
 constexpr int32_t kSheetH = 3 * 64 + 2 * kGridGap + 2 * 20;   ///< pannello editor
 constexpr int kAddIndex = 100;     ///< id della scheda "+" (aggiungi)
 
@@ -48,11 +48,11 @@ struct CardView {
 };
 
 lv_obj_t* g_page = nullptr;
-lv_obj_t* g_head = nullptr;     ///< riga fissa in alto
 lv_obj_t* g_grid = nullptr;     ///< contenitore scorrevole delle schede
 lv_obj_t* g_sheet = nullptr;    ///< pannello dell'editor
 lv_obj_t* g_picker = nullptr;   ///< elenco grandezze
-lv_obj_t* g_pencil = nullptr;
+lv_obj_t* g_pencil = nullptr;   ///< matita / spunta nella barra in basso (sullo schermo)
+lv_obj_t* g_pencil_ic = nullptr;
 lv_obj_t* g_sheet_btn[6] = {};
 int32_t   g_w = 0, g_h = 0;
 custom::Layout g_layout;
@@ -69,7 +69,7 @@ int32_t col_w() { return (g_w - 2 * kMargin - 3 * kGridGap) / 4; }
 
 void rect_of(const custom::Placement& p, int32_t& x, int32_t& y, int32_t& wd, int32_t& ht) {
     x = kMargin + p.col * (col_w() + kGridGap);
-    y = 4 + p.row * (kGridRowH + kGridGap);
+    y = 6 + p.row * (kGridRowH + kGridGap);
     wd = p.cols * col_w() + (p.cols - 1) * kGridGap;
     ht = p.rows * kGridRowH + (p.rows - 1) * kGridGap;
 }
@@ -278,24 +278,14 @@ void build_add_card(const custom::Placement& pl) {
     lv_obj_center(plus);
 }
 
-void build_head() {
-    // Riga in alto (fissa): suggerimento e matita / spunta
-    for (uint32_t i = lv_obj_get_child_count(g_head); i > 0; --i) lv_obj_delete(lv_obj_get_child(g_head, i - 1));
-    const bool hint = !g_editing && !(g_layout.flags & 1);
-    if (hint || g_editing) {
-        const char* txt = g_editing ? (g_moving ? "Tocca dove spostarla" : "Tocca una scheda per modificarla")
-                                    : "Tieni premuta una scheda o tocca la matita";
-        lv_obj_t* l = w::label(g_head, txt, fontLabel(), kSecondary);
-        lv_obj_set_pos(l, kMargin + 6, (kHeadH - lv_font_get_line_height(fontLabel())) / 2);
+void update_pencil() {
+    // matita in basso accanto all'ingranaggio; nell'editor diventa la spunta
+    // e al posto dei pallini delle pagine compare il suggerimento
+    if (g_pencil_ic) {
+        lv_label_set_text(g_pencil_ic, g_editing ? LV_SYMBOL_OK : LV_SYMBOL_EDIT);
+        lv_obj_set_style_text_color(g_pencil_ic, c(g_editing ? accent() : kSecondary), 0);
     }
-    g_pencil = w::box(g_head, g_w - kMargin - 64, 0, 64, kHeadH, kBg, 16);
-    lv_obj_add_flag(g_pencil, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(g_pencil, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_set_style_bg_color(g_pencil, c(kCardPress), LV_STATE_PRESSED);
-    lv_obj_t* ic = w::label(g_pencil, g_editing ? LV_SYMBOL_OK : LV_SYMBOL_EDIT, &lv_font_montserrat_28,
-                            g_editing ? accent() : kSecondary);
-    lv_obj_center(ic);
-    lv_obj_add_event_cb(g_pencil, pencil_cb, LV_EVENT_CLICKED, nullptr);
+    setBottomHint(!g_editing ? nullptr : g_moving ? "Tocca dove spostarla" : "Tocca una scheda per modificarla");
 }
 
 void build_sheet() {
@@ -339,7 +329,7 @@ void rebuild() {
     const int32_t keep_scroll = lv_obj_get_scroll_y(g_grid);
     lv_obj_clean(g_grid);
     for (auto& o : g_card_obj) o = nullptr;
-    build_head();
+    update_pencil();
 
     custom::Placement pl[kMaxCards + 1];
     // nell'editor si aggiunge in coda una scheda "+" (1/2 bassa) per aggiungere
@@ -372,6 +362,25 @@ bool editing() { return g_editing; }
 int debugSlotType(int s) { return (s >= 0 && s < g_layout.count) ? g_layout.cards[s].type : -1; }
 int debugCardCount() { return g_layout.count; }
 lv_obj_t* debugPencil() { return g_pencil; }
+
+void buildPencil(lv_obj_t* scr, int32_t x, int32_t y, int32_t wd, int32_t ht) {
+    g_pencil = w::box(scr, x, y, wd, ht, kBg, 16);
+    lv_obj_add_flag(g_pencil, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(g_pencil, 8);
+    lv_obj_remove_flag(g_pencil, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_style_bg_color(g_pencil, c(kCardPress), LV_STATE_PRESSED);
+    g_pencil_ic = w::label(g_pencil, LV_SYMBOL_EDIT, &lv_font_montserrat_30, kSecondary);
+    lv_obj_center(g_pencil_ic);
+    lv_obj_add_event_cb(g_pencil, pencil_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(g_pencil, LV_OBJ_FLAG_HIDDEN);
+    update_pencil();
+}
+
+void setPencilVisible(bool on) {
+    if (!g_pencil) return;
+    if (on) lv_obj_remove_flag(g_pencil, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(g_pencil, LV_OBJ_FLAG_HIDDEN);
+}
 lv_obj_t* debugSheetButton(int i) { return (i >= 0 && i < 6) ? g_sheet_btn[i] : nullptr; }
 lv_obj_t* debugGrid() { return g_grid; }
 
@@ -393,10 +402,8 @@ void build(lv_obj_t* parent, int32_t W, int32_t H, int32_t /*y0*/) {
     void* mem = heap_caps_calloc(kMaxCards, sizeof(CardView), MALLOC_CAP_SPIRAM);
     if (!mem) return;
     g_views = new (mem) CardView[kMaxCards];
-    g_head = w::box(parent, 0, 0, W, kHeadH, kBg);
-    lv_obj_set_style_bg_opa(g_head, LV_OPA_TRANSP, 0);
     // contenitore scorrevole in verticale (lo swipe orizzontale resta per cambiare pagina)
-    g_grid = w::box(parent, 0, kHeadH, W, H - kHeadH, kBg);
+    g_grid = w::box(parent, 0, 0, W, H, kBg);
     lv_obj_set_style_bg_opa(g_grid, LV_OPA_TRANSP, 0);
     lv_obj_add_flag(g_grid, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(g_grid, LV_OBJ_FLAG_SCROLLABLE);

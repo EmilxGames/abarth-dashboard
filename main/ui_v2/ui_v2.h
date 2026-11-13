@@ -20,4 +20,7 @@ enum class Page : uint8_t { Guida = 0, Temperature, Pressioni, Elettrico, Person
 /// Mostra una pagina (da chiamare nel task LVGL)
 void showPage(Page p);
 
+/// Testo al posto dei pallini delle pagine (nullptr = di nuovo i pallini)
+void setBottomHint(const char* txt);
+
 }  // namespace abarth::ui_v2
