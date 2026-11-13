@@ -19,4 +19,7 @@ bool debugScrollBottom();
 int debugDepth();
 lv_obj_t* debugTopList();
 int debugCategoryCount();
+/// Solo test: apre "Ordine pagine"; pulsante della riga pos (0 occhio, 1 su, 2 giu')
+void debugOpenPageOrder();
+lv_obj_t* debugOrderButton(int pos, int which);
 }

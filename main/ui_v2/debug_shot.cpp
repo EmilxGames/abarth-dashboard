@@ -270,8 +270,47 @@ void schema_shots() {
     if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); showPage(Page::Guida); lvgl_port_unlock(); }
 }
 
+void order_tests() {
+    // Ordine pagine: tocchi veri sui pulsanti della sottopagina, poi swipe
+    auto tap_obj = [](lv_obj_t* o) {
+        if (!o) return;
+        lv_area_t a;
+        if (lvgl_port_lock(-1)) { lv_obj_get_coords(o, &a); lvgl_port_unlock(); }
+        tap((a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    };
+    if (lvgl_port_lock(-1)) {
+        setPageOrder(page_order::defaults());
+        showPage(Page::Setup);
+        settings_pages::debugOpenPageOrder();
+        lvgl_port_unlock();
+    }
+    vTaskDelay(pdMS_TO_TICKS(500));
+    for (int pos = 4; pos > 0; --pos) tap_obj(settings_pages::debugOrderButton(pos, 1));   // PERSONALE in cima
+    tap_obj(settings_pages::debugOrderButton(4, 0));   // nasconde ELETTRICO (ora ultima)
+    vTaskDelay(pdMS_TO_TICKS(300));
+    dump(80);
+    const auto o = pageOrder();
+    const bool order_ok = o.order[0] == 4 && o.order[1] == 0 && o.order[4] == 3 && page_order::isHidden(o, 3);
+    // sequenza attesa con lo swipe: PERSONALE, GUIDA, TEMPERATURE, PRESSIONI, IMPOSTAZIONI
+    if (lvgl_port_lock(-1)) { settings_pages::closeSubPages(); showPage(Page::Personale); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(400));
+    const Page want[] = {Page::Guida, Page::Temperature, Page::Pressioni, Page::Setup};
+    int good = 0;
+    for (Page w : want) { hswipe(520, 80, 500); good += debugCurrentPage() == w; }
+    hswipe(80, 520, 500);   // indietro da IMPOSTAZIONI: PRESSIONI (ELETTRICO e' nascosta)
+    good += debugCurrentPage() == Page::Pressioni;
+    if (lvgl_port_lock(-1)) { showPage(Page::Personale); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(400));
+    dump(81);
+    ESP_LOGW("TOUCH_TEST", "ordine pagine: ordine=%d swipe %d/5 %s", order_ok, good, (order_ok && good == 5) ? "OK" : "ERRORE");
+    if (lvgl_port_lock(-1)) { setPageOrder(page_order::defaults()); showPage(Page::Guida); lvgl_port_unlock(); }
+}
+
 void task(void*) {
     vTaskDelay(pdMS_TO_TICKS(15000));
+    ESP_LOGW("TOUCH_TEST", "pagina all'avvio: %d", static_cast<int>(debugCurrentPage()));
+    order_tests();
     schema_shots();
     page_tests();
     gear_test();
@@ -293,6 +332,14 @@ void task(void*) {
     }
     if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); showPage(Page::Guida); lvgl_port_unlock(); }
     warmup_shots();
+    // lascia PERSONALE per prima: al prossimo avvio deve aprirsi PERSONALE
+    if (lvgl_port_lock(-1)) {
+        page_order::Order o = page_order::defaults();
+        for (int pos = 4; pos > 0; --pos) page_order::moveUp(o, pos);
+        setPageOrder(o);
+        lvgl_port_unlock();
+    }
+    ESP_LOGW("TOUCH_TEST", "fine test: PERSONALE impostata come prima pagina");
     vTaskDelete(nullptr);
 }
 }  // namespace

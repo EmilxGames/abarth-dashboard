@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <sys/stat.h>
 #include <vector>
@@ -30,6 +31,7 @@
 #include "ui_v2/async_ui.h"
 #include "ui_v2/metric_info.h"
 #include "ui_v2/sp_kit.h"
+#include "ui_v2/ui_v2.h"
 #include "ui_v2/theme.h"
 #include "ui_v2/widgets.h"
 #include "wifi_manager.h"
@@ -350,6 +352,90 @@ void page_can() {
     sp::rowNav(l, "Vedi schema collegamenti", nullptr, []() { page_schema(); });
 }
 
+// =========================================================== ORDINE PAGINE
+const char* const kDataPageNames[page_order::kData] = {"GUIDA", "TEMPERATURE", "PRESSIONI", "ELETTRICO", "PERSONALE"};
+
+void page_order_edit();
+lv_obj_t* g_order_btns[page_order::kData][3] = {};   ///< solo per i test: occhio, su, giu'
+
+/// Pulsantino con simbolo (frecce, occhio) dentro una riga dell'ordine pagine
+lv_obj_t* order_btn(lv_obj_t* row, int32_t x, const char* sym, bool enabled, lv_event_cb_t cb, int arg) {
+    lv_obj_t* b = w::box(row, x, (kRowH - 52) / 2, 60, 52, kTrack, 14);
+    lv_obj_t* l = w::label(b, sym, &lv_font_montserrat_22, enabled ? kText : kDim);
+    lv_obj_center(l);
+    if (!enabled) {
+        lv_obj_set_style_bg_opa(b, LV_OPA_TRANSP, 0);
+        return b;
+    }
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(b, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_style_bg_color(b, c(kCardPress), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(arg)));
+    return b;
+}
+
+void order_apply_and_reopen(const page_order::Order& o) {
+    setPageOrder(o);
+    sp::pop();             // ridisegna la sottopagina con il nuovo ordine
+    page_order_edit();
+}
+
+int order_arg(lv_event_t* e) { return static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e))); }
+
+void page_order_edit() {
+    lv_obj_t* l = sp::push("Ordine pagine");
+    const page_order::Order o = pageOrder();
+    sp::section(l, "DALLA PRIMA ALL'ULTIMA");
+    const int32_t W = sp::rowWidth();
+    for (int pos = 0; pos < page_order::kData; ++pos) {
+        const int pg = o.order[pos];
+        const bool hidden = page_order::isHidden(o, pg);
+        lv_obj_t* r = sp::rowCustom(l, kRowH);
+        if (!r) return;
+        char num[4];
+        std::snprintf(num, sizeof(num), "%d", pos + 1);
+        lv_obj_t* n = w::label(r, num, fontBody(), kDim);
+        lv_obj_set_pos(n, kCardPad, (kRowH - lv_font_get_line_height(fontBody())) / 2);
+        lv_obj_t* name = w::label(r, kDataPageNames[pg], fontBody(), hidden ? kDim : kText);
+        lv_obj_set_pos(name, kCardPad + 36, (kRowH - lv_font_get_line_height(fontBody())) / 2);
+        // a destra: mostra/nascondi, su, giu'
+        const int32_t xr = W - kCardPad + 10;
+        g_order_btns[pos][2] = order_btn(r, xr - 60, LV_SYMBOL_DOWN, pos < page_order::kData - 1, [](lv_event_t* e) {
+            page_order::Order no = pageOrder();
+            if (page_order::moveDown(no, order_arg(e))) order_apply_and_reopen(no);
+        }, pos);
+        g_order_btns[pos][1] = order_btn(r, xr - 128, LV_SYMBOL_UP, pos > 0, [](lv_event_t* e) {
+            page_order::Order no = pageOrder();
+            if (page_order::moveUp(no, order_arg(e))) order_apply_and_reopen(no);
+        }, pos);
+        lv_obj_t* eye = order_btn(r, xr - 208, hidden ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN, true, [](lv_event_t* e) {
+            page_order::Order no = pageOrder();
+            const int page = order_arg(e);
+            if (!page_order::setVisible(no, page, page_order::isHidden(no, page))) {
+                sp::message("Ordine pagine", "Almeno una pagina deve restare visibile.");
+                return;
+            }
+            order_apply_and_reopen(no);
+        }, pg);
+        g_order_btns[pos][0] = eye;
+        if (hidden) lv_obj_set_style_text_color(lv_obj_get_child(eye, 0), c(kDim), 0);
+    }
+    sp::rowInfo(l, []() {
+        return string("La prima pagina \xC3\xA8 quella che vedi all'accensione. L'occhio mostra o nasconde una pagina. "
+                      "IMPOSTAZIONI resta sempre ultima (e c'\xC3\xA8 sempre la rotellina).");
+    });
+    sp::section(l, "");
+    sp::rowAction(l, "Ripristina ordine predefinito", []() { order_apply_and_reopen(page_order::defaults()); });
+}
+
+string order_summary() {
+    const page_order::Order& o = pageOrder();
+    uint8_t v[page_order::kData];
+    const int n = page_order::visible(o, v);
+    if (n == page_order::kData && std::memcmp(o.order, page_order::defaults().order, sizeof(o.order)) == 0) return "Predefinito";
+    return fmt("Prima: %s", kDataPageNames[v[0]]);
+}
+
 // =========================================================== DISPLAY
 void page_display() {
     lv_obj_t* l = sp::push("Display");
@@ -369,6 +455,7 @@ void page_display() {
                    });
     });
     sp::section(l, "INTERFACCIA");
+    sp::rowNav(l, "Ordine pagine", []() { return order_summary(); }, []() { page_order_edit(); });
     sp::rowNav(l, "Stile interfaccia", []() { return string(current().ui_style == UiStyle::Racing ? "Moderno" : "Classica"); }, []() {
         sp::choice("Stile interfaccia", {"Classica", "Moderno"}, []() { return static_cast<int>(current().ui_style); }, [](int i) {
             if (i == static_cast<int>(current().ui_style)) return;
@@ -799,6 +886,10 @@ void closeSubPages() { sp::popAll(); }
 lv_obj_t* rootList() { return g_root; }
 int debugDepth() { return sp::depth(); }
 lv_obj_t* debugTopList() { return sp::topList(); }
+void debugOpenPageOrder() { page_order_edit(); }
+lv_obj_t* debugOrderButton(int pos, int which) {
+    return (pos >= 0 && pos < page_order::kData && which >= 0 && which < 3) ? g_order_btns[pos][which] : nullptr;
+}
 int debugCategoryCount() { return static_cast<int>(sizeof(kCats) / sizeof(kCats[0])); }
 bool debugScrollBottom() {
     lv_obj_t* l = sp::topList();

@@ -13,6 +13,7 @@
 #include "display/lvgl_v8_port.h"
 #include "obd/obd_manager.h"
 #include "ui/ui.h"
+#include "ui_v2/page_order.h"
 #include "ui_v2/page_personale.h"
 #include "ui_v2/pages.h"
 #include "ui_v2/settings_pages.h"
@@ -45,6 +46,11 @@ w::StatusDot g_conn_dot;
 lv_obj_t* g_pages[kPages] = {};
 lv_obj_t* g_dots[kPages] = {};
 Page g_current = Page::Guida;
+// Sequenza delle pagine per swipe e pallini: pagine dati visibili nell'ordine
+// scelto, poi sempre IMPOSTAZIONI
+page_order::Order g_order;
+Page g_seq[kPages] = {};
+int  g_seq_n = 0;
 int32_t g_dots_x0 = 0;
 
 constexpr int32_t kDot = 12, kDotActiveW = 38, kDotGap = 16;   // pallini piu' visibili
@@ -109,11 +115,39 @@ void show_title(int idx) {
     else g_title_timer = lv_timer_create(title_settle_cb, 1000, nullptr);
 }
 
+int pos_of(Page p) {
+    for (int i = 0; i < g_seq_n; ++i) if (g_seq[i] == p) return i;
+    return -1;
+}
+
+void build_seq() {
+    uint8_t v[page_order::kData];
+    const int n = page_order::visible(g_order, v);
+    g_seq_n = 0;
+    for (int i = 0; i < n; ++i) g_seq[g_seq_n++] = static_cast<Page>(v[i]);
+    g_seq[g_seq_n++] = Page::Setup;
+    const int32_t dots_w = (g_seq_n - 1) * (kDot + kDotGap) + kDotActiveW;
+    g_dots_x0 = (LV_HOR_RES - dots_w) / 2;
+}
+
+/// pagina successiva/precedente nella sequenza (dir +1 / -1)
+void step_page(int dir) {
+    const int pos = pos_of(g_current);
+    const int np = pos + dir;
+    if (pos >= 0 && np >= 0 && np < g_seq_n) showPage(g_seq[np]);
+}
+
 void layout_dots() {
-    // pallini da 9 px, quello attivo e' una pillola 30x9 nel colore accento
+    // un pallino per pagina della sequenza; quello attivo e' una pillola nel colore accento
     int32_t x = g_dots_x0;
+    const int cur = pos_of(g_current);
     for (int i = 0; i < kPages; ++i) {
-        const bool act = i == static_cast<int>(g_current);
+        if (i >= g_seq_n) {
+            lv_obj_add_flag(g_dots[i], LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        if (!g_hint || lv_obj_has_flag(g_hint, LV_OBJ_FLAG_HIDDEN)) lv_obj_remove_flag(g_dots[i], LV_OBJ_FLAG_HIDDEN);
+        const bool act = i == cur;
         const int32_t wdt = act ? kDotActiveW : kDot;
         lv_obj_set_pos(g_dots[i], x, kDotsY - kDot / 2);
         lv_obj_set_width(g_dots[i], wdt);
@@ -241,9 +275,8 @@ void gesture_cb(lv_event_t*) {
     // fino al rilascio (altrimenti le schede toccabili della pagina nuova,
     // es. PERSONALE, "riprendono" il gesto e si salta una pagina)
     if (d == LV_DIR_LEFT || d == LV_DIR_RIGHT) lv_indev_wait_release(indev);
-    const int cur = static_cast<int>(g_current);
-    if (d == LV_DIR_LEFT && cur < kPages - 1) showPage(static_cast<Page>(cur + 1));
-    else if (d == LV_DIR_RIGHT && cur > 0) showPage(static_cast<Page>(cur - 1));
+    if (d == LV_DIR_LEFT) step_page(+1);
+    else if (d == LV_DIR_RIGHT) step_page(-1);
 }
 
 void gear_cb(lv_event_t*) {
@@ -252,7 +285,7 @@ void gear_cb(lv_event_t*) {
     if (personale::editing()) return;
     settings_pages::closeSubPages();
     if (g_current == Page::Setup) {
-        showPage(g_before_setup);
+        showPage(pos_of(g_before_setup) >= 0 ? g_before_setup : g_seq[0]);
     } else {
         g_before_setup = g_current;
         showPage(Page::Setup);
@@ -264,9 +297,7 @@ void dots_tap_cb(lv_event_t* e) {
     if (personale::editing()) return;
     lv_point_t p;
     lv_indev_get_point(lv_indev_active(), &p);
-    const int cur = static_cast<int>(g_current);
-    if (p.x < LV_HOR_RES / 2 && cur > 0) showPage(static_cast<Page>(cur - 1));
-    else if (p.x >= LV_HOR_RES / 2 && cur < kPages - 1) showPage(static_cast<Page>(cur + 1));
+    step_page(p.x < LV_HOR_RES / 2 ? -1 : +1);
 }
 }  // namespace
 
@@ -287,13 +318,26 @@ void showPage(Page p) {
     pages::onShow(p);
 }
 
+const page_order::Order& pageOrder() { return g_order; }
+
+void setPageOrder(const page_order::Order& o) {
+    // salva e applica subito: sequenza, pallini e (se serve) pagina mostrata
+    g_order = o;
+    page_order::validate(g_order);
+    page_order::save(g_order);
+    build_seq();
+    if (pos_of(g_before_setup) < 0) g_before_setup = g_seq[0];
+    if (pos_of(g_current) < 0) showPage(g_seq[0]);
+    else layout_dots();
+}
+
 void setBottomHint(const char* txt) {
     if (!g_hint) return;
     const bool on = txt != nullptr;
-    for (auto* d : g_dots) {
-        if (!d) continue;
-        if (on) lv_obj_add_flag(d, LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_remove_flag(d, LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < kPages; ++i) {
+        if (!g_dots[i]) continue;
+        if (on || i >= g_seq_n) lv_obj_add_flag(g_dots[i], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_remove_flag(g_dots[i], LV_OBJ_FLAG_HIDDEN);
     }
     if (on) {
         lv_label_set_text(g_hint, txt);
@@ -368,9 +412,9 @@ void build() {
         pages::build(static_cast<Page>(i), g_pages[i], W, kPageBottom - kPageTop, kPageTop);
     }
 
-    // Indicatore pagine + fascia toccabile
-    const int32_t dots_w = (kPages - 1) * (kDot + kDotGap) + kDotActiveW;
-    g_dots_x0 = (W - dots_w) / 2;
+    // Indicatore pagine + fascia toccabile (ordine e pagine visibili da NVS)
+    g_order = page_order::load();
+    build_seq();
     // fascia dei pallini: toccabile solo fino all'ingranaggio, cosi' un tocco
     // sull'ingranaggio apre soltanto le Impostazioni
     // a destra: matita di PERSONALE e ingranaggio (la fascia si ferma prima)
@@ -397,7 +441,8 @@ void build() {
     lv_obj_set_pos(g_hint, kMargin, kDotsY - lv_font_get_line_height(fontLabel()) / 2);
     lv_obj_add_flag(g_hint, LV_OBJ_FLAG_HIDDEN);
 
-    showPage(Page::Guida);
+    showPage(g_seq[0]);   // la prima pagina dell'ordine scelto
+    g_before_setup = g_seq[0];
     update_status();
     lv_timer_create(on_timer, 50, nullptr);  // 20 Hz: si ridisegna solo cio' che cambia
     lv_scr_load(g_scr);
