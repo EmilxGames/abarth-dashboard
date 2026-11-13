@@ -394,6 +394,13 @@ lv_obj_t* dialog_card(const char* title, const std::string& text, int32_t& out_h
     lv_text_get_size(&sz, text.c_str(), fontUnit(), 0, 4, dw - 2 * kCardPad, LV_TEXT_FLAG_NONE);
     out_h = kCardPad + 34 + sz.y + 24 + kRowH + kCardPad;
     lv_obj_t* cardo = w::card(g_dialog, kMargin, (g_h - out_h) / 2, dw, out_h);
+    // un tocco fuori dalla finestra la chiude (come "Annulla"); la finestra
+    // stessa assorbe i tocchi
+    lv_obj_add_flag(cardo, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(cardo, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_event_cb(g_dialog, [](lv_event_t* e) {
+        if (lv_event_get_target(e) == lv_event_get_current_target(e)) close_dialog();
+    }, LV_EVENT_CLICKED, nullptr);
     lv_obj_set_style_border_width(cardo, 1, 0);
     lv_obj_set_style_border_color(cardo, c(kTrack), 0);
     lv_obj_t* t = w::label(cardo, title, fontBody(), kText);
@@ -489,6 +496,8 @@ void textInput(const char* title, const std::string& initial, bool password,
     }, LV_EVENT_DELETE, f);
     (void)p;
 }
+
+bool dialogOpen() { return g_dialog != nullptr; }
 
 lv_obj_t* topList() { return g_stack.empty() ? nullptr : g_stack.back()->list; }
 

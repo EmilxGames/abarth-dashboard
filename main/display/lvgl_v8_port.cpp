@@ -320,6 +320,19 @@ extern "C" void lvgl_port_debug_touch(bool active, bool pressed, int32_t x, int3
 }
 #endif
 
+// Il GT911 aggiorna le coordinate a una sua cadenza: se LVGL legge prima del
+// campione successivo il driver risponde "0 punti" anche col dito appoggiato.
+// Quel falso rilascio a meta' movimento azzera il gesto (lo swipe non passa
+// pagina), soprattutto quando lo schermo si ridisegna di continuo e le letture
+// arrivano a intervalli irregolari. Si considera rilascio solo dopo 45 ms
+// senza punti; nel frattempo si ripete l'ultimo punto.
+static constexpr int64_t kTouchReleaseHoldUs = 45 * 1000;
+static int64_t s_touch_last_us = 0;
+static lv_point_t s_touch_last_pt = {0, 0};
+static uint32_t s_touch_bridged = 0;   ///< falsi rilasci assorbiti (diagnostica)
+
+uint32_t lvgl_port_touch_bridged_count() { return s_touch_bridged; }
+
 static void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data)
 {
 #if CONFIG_ABARTH_SCREENSHOT
@@ -339,6 +352,17 @@ static void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data)
     }
 
     int read_touch_result = tp->readPoints(&point, 1, 0);
+    const int64_t now_us = esp_timer_get_time();
+    if (read_touch_result <= 0) {
+        if (s_touch_last_us != 0 && now_us - s_touch_last_us < kTouchReleaseHoldUs) {
+            data->point = s_touch_last_pt;   // dito probabilmente ancora giu': nessun rilascio
+            data->state = LV_INDEV_STATE_PRESSED;
+            ++s_touch_bridged;
+        } else {
+            s_touch_last_us = 0;
+        }
+        return;
+    }
     if (read_touch_result > 0) {
         int tx = point.x;
         int ty = point.y;
@@ -363,6 +387,8 @@ static void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data)
         if (data->point.y > max_y) data->point.y = max_y;
 
         data->state = LV_INDEV_STATE_PRESSED;
+        s_touch_last_us = now_us;
+        s_touch_last_pt = data->point;
     }
 }
 

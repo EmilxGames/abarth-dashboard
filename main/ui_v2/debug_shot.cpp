@@ -18,6 +18,7 @@
 #include "ui_v2/ui_v2.h"
 #include "ui_v2/page_personale.h"
 #include "ui_v2/settings_pages.h"
+#include "ui_v2/sp_kit.h"
 
 namespace abarth::display { void* debugFramebuffer(); }
 namespace abarth::ui_v2 { Page debugCurrentPage(); bool debugWarmBlink(); }
@@ -155,6 +156,13 @@ void gear_test() {
              (int)debugCurrentPage(), settings_pages::debugDepth(), ok);
 }
 
+/// swipe veloce come un dito vero: steps punti ogni dt ms
+void hswipe_fast(int32_t x0, int32_t x1, int32_t y, int steps, int dt) {
+    for (int i = 0; i <= steps; ++i) { lvgl_port_debug_touch(true, true, x0 + (x1 - x0) * i / steps, y); vTaskDelay(pdMS_TO_TICKS(dt)); }
+    lvgl_port_debug_touch(true, false, x1, y); vTaskDelay(pdMS_TO_TICKS(30)); lvgl_port_debug_touch(false, false, 0, 0);
+    vTaskDelay(pdMS_TO_TICKS(500));
+}
+
 void hswipe(int32_t x0, int32_t x1, int32_t y) {
     for (int i = 0; i <= 12; ++i) { lvgl_port_debug_touch(true, true, x0 + (x1 - x0) * i / 12, y); vTaskDelay(pdMS_TO_TICKS(16)); }
     lvgl_port_debug_touch(true, false, x1, y); vTaskDelay(pdMS_TO_TICKS(80)); lvgl_port_debug_touch(false, false, 0, 0);
@@ -187,6 +195,13 @@ void page_tests() {
     center_tap(personale::debugPencil());
     const bool ed = personale::editing();
     dump(21);
+    center_tap(personale::debugSheetButton(0));   // "Dato: ..." apre l'elenco dei dati
+    const bool picker_open = personale::debugPickerOpen();
+    dump(23);
+    center_tap(personale::debugPickerBack());     // freccia indietro: chiude senza cambiare
+    const bool picker_closed = !personale::debugPickerOpen() && personale::editing();
+    ESP_LOGW("TOUCH_TEST", "PERSONALE elenco dati: aperto=%d chiuso con freccia=%d %s", picker_open, picker_closed,
+             (picker_open && picker_closed) ? "OK" : "ERRORE");
     center_tap(personale::debugSheetButton(2));   // Larghezza
     center_tap(personale::debugSheetButton(3));   // Altezza
     // scorre la griglia verso il basso (trascinando sopra il pannello editor)
@@ -270,6 +285,51 @@ void schema_shots() {
     if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); showPage(Page::Guida); lvgl_port_unlock(); }
 }
 
+int fast_round(int steps, int dt) {
+    // GUIDA -> avanti fino a IMPOSTAZIONI e indietro: quanti swipe vanno a segno
+    if (lvgl_port_lock(-1)) { showPage(Page::Guida); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(400));
+    const int n = static_cast<int>(Page::Count);
+    int ok = 0;
+    for (int i = 1; i < n; ++i) { hswipe_fast(450, 150, 500, steps, dt); ok += static_cast<int>(debugCurrentPage()) == i; }
+    for (int i = n - 2; i >= 0; --i) { hswipe_fast(150, 450, 500, steps, dt); ok += static_cast<int>(debugCurrentPage()) == i; }
+    return ok;
+}
+
+void sim_swipe_test() {
+    const bool dbg0 = settings::current().debug_mode, demo0 = settings::current().demo_mode;
+    const int speeds[][2] = {{12, 16}, {4, 16}};
+    for (int sim = 0; sim < 2; ++sim) {
+        settings::setDebugMode(sim);
+        settings::setDemoMode(sim);
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        for (auto& sp : speeds) {
+            const int ok = fast_round(sp[0], sp[1]);
+            ESP_LOGW("TOUCH_TEST", "simulazione=%d swipe in %d ms: %d/10", sim, sp[0] * sp[1], ok);
+        }
+    }
+    settings::setDemoMode(demo0);
+    settings::setDebugMode(dbg0);
+}
+
+void dialog_test() {
+    // finestra di conferma: un tocco fuori la chiude, un tocco dentro no
+    if (lvgl_port_lock(-1)) {
+        showPage(Page::Setup);
+        sp::confirm("Prova", "Tocca fuori per chiudere.", "OK", nullptr, false);
+        lvgl_port_unlock();
+    }
+    vTaskDelay(pdMS_TO_TICKS(400));
+    dump(24);
+    tap(300, 560);   // sul testo della finestra (centro schermo): resta aperta
+    const bool stays = sp::dialogOpen();
+    tap(300, 150);   // fuori, in alto: si chiude
+    vTaskDelay(pdMS_TO_TICKS(200));
+    const bool closed = !sp::dialogOpen();
+    ESP_LOGW("TOUCH_TEST", "finestra: tocco dentro resta=%d, tocco fuori chiude=%d %s", stays, closed, (stays && closed) ? "OK" : "ERRORE");
+    if (lvgl_port_lock(-1)) { showPage(Page::Guida); lvgl_port_unlock(); }
+}
+
 void order_tests() {
     // Ordine pagine: tocchi veri sui pulsanti della sottopagina, poi swipe
     auto tap_obj = [](lv_obj_t* o) {
@@ -310,6 +370,12 @@ void order_tests() {
 void task(void*) {
     vTaskDelay(pdMS_TO_TICKS(15000));
     ESP_LOGW("TOUCH_TEST", "pagina all'avvio: %d", static_cast<int>(debugCurrentPage()));
+    // i test usano l'ordine pagine predefinito (quello dell'utente si ripristina dopo)
+    const page_order::Order user_order = pageOrder();
+    if (lvgl_port_lock(-1)) { setPageOrder(page_order::defaults()); lvgl_port_unlock(); }
+    sim_swipe_test();
+    if (lvgl_port_lock(-1)) { setPageOrder(user_order); lvgl_port_unlock(); }
+    dialog_test();
     order_tests();
     schema_shots();
     page_tests();

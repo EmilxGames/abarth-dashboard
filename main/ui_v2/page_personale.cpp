@@ -50,7 +50,8 @@ struct CardView {
 lv_obj_t* g_page = nullptr;
 lv_obj_t* g_grid = nullptr;     ///< contenitore scorrevole delle schede
 lv_obj_t* g_sheet = nullptr;    ///< pannello dell'editor
-lv_obj_t* g_picker = nullptr;   ///< elenco grandezze
+lv_obj_t* g_picker = nullptr;   ///< elenco dei dati da mostrare
+lv_obj_t* g_picker_back = nullptr;
 lv_obj_t* g_pencil = nullptr;   ///< matita / spunta nella barra in basso (sullo schermo)
 lv_obj_t* g_pencil_ic = nullptr;
 lv_obj_t* g_sheet_btn[6] = {};
@@ -159,10 +160,23 @@ void open_picker() {
     size_t n = 0;
     const MetricInfo* cat = metricCatalog(n);
     const int32_t cw = g_w - 2 * kMargin;
-    lv_obj_t* t = w::label(g_picker, g_adding ? "NUOVA SCHEDA" : "SCEGLI GRANDEZZA", fontLabel(), kDim, true);
-    lv_obj_set_pos(t, kMargin + kCardPad, 14);
-    const size_t rows = g_adding ? n + 1 : n + 1;
-    lv_obj_t* card = w::card(g_picker, kMargin, 50, cw, static_cast<int32_t>(rows * (kRowH + 1)));
+    // intestazione: freccia indietro (chiude senza cambiare nulla) e titolo
+    lv_obj_t* back = w::box(g_picker, kMargin - 8, 0, 160, 64, kBg, 16);
+    lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(back, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_remove_flag(back, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_set_style_bg_color(back, c(kCardPress), LV_STATE_PRESSED);
+    lv_obj_t* arrow = w::label(back, LV_SYMBOL_LEFT "  Indietro", fontBody(), kText);
+    lv_obj_align(arrow, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_add_event_cb(back, [](lv_event_t*) {
+        g_adding = false;
+        picker_close();
+    }, LV_EVENT_CLICKED, nullptr);
+    g_picker_back = back;
+    lv_obj_t* t = w::label(g_picker, g_adding ? "NUOVA SCHEDA" : "DATO DA MOSTRARE", fontLabel(), kDim, true);
+    lv_obj_set_pos(t, kMargin + kCardPad, 76);
+    const size_t rows = n + 1;
+    lv_obj_t* card = w::card(g_picker, kMargin, 110, cw, static_cast<int32_t>(rows * (kRowH + 1)));
     for (size_t i = 0; i < rows; ++i) {
         const int32_t ry = static_cast<int32_t>(i) * (kRowH + 1);
         lv_obj_t* row = w::box(card, 0, ry, cw, kRowH, kCard);
@@ -303,7 +317,11 @@ void build_sheet() {
         char txt[40];
         static const char* const tn[] = {"Numero", "Barra", "Min/Max"};
         switch (i) {
-            case 0: std::snprintf(txt, sizeof(txt), "Grandezza"); break;
+            case 0: {   // il dato (parametro) mostrato dalla scheda
+                const MetricInfo* mi = cd ? metricInfo(static_cast<data::Metric>(cd->metric)) : nullptr;
+                std::snprintf(txt, sizeof(txt), "Dato: %s", mi ? mi->name : "-");
+                break;
+            }
             case 1: std::snprintf(txt, sizeof(txt), "Tipo: %s", cd ? tn[cd->type % 3] : "-"); break;
             case 2: std::snprintf(txt, sizeof(txt), "Larghezza: %s", !cd ? "-" : cd->cols == 1 ? "1/4" : cd->cols == 2 ? "1/2" : "intera"); break;
             case 3: std::snprintf(txt, sizeof(txt), "Altezza: %s", !cd ? "-" : cd->rows == 1 ? "bassa" : "alta"); break;
@@ -383,6 +401,8 @@ void setPencilVisible(bool on) {
 }
 lv_obj_t* debugSheetButton(int i) { return (i >= 0 && i < 6) ? g_sheet_btn[i] : nullptr; }
 lv_obj_t* debugGrid() { return g_grid; }
+lv_obj_t* debugPickerBack() { return g_picker ? g_picker_back : nullptr; }
+bool debugPickerOpen() { return g_picker != nullptr; }
 
 void debugMode(int mode) {
     picker_close();

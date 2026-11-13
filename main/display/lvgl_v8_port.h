@@ -49,6 +49,8 @@ bool lvgl_port_lock(int timeout_ms);
 bool lvgl_port_unlock(void);
 /// Numero di frame completi inviati al display (per misure FPS)
 uint32_t lvgl_port_get_frame_count(void);
+/// Falsi rilasci del touch assorbiti (diagnostica, vedi touchpad_read)
+uint32_t lvgl_port_touch_bridged_count(void);
 
 #ifdef __cplusplus
 }

@@ -64,6 +64,8 @@ void textInput(const char* title, const std::string& initial, bool password,
 
 /// Aggiorna i valori visibili (chiamata dal timer della pagina SETUP)
 void refresh();
+/// true se e' aperta una finestra (conferma/messaggio)
+bool dialogOpen();
 /// Lista della pagina in cima alla pila
 lv_obj_t* topList();
 

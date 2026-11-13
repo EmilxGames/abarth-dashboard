@@ -20,4 +20,6 @@ int debugCardCount();
 lv_obj_t* debugPencil();
 lv_obj_t* debugSheetButton(int i);
 lv_obj_t* debugGrid();
+lv_obj_t* debugPickerBack();
+bool debugPickerOpen();
 }

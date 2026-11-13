@@ -3,6 +3,7 @@
 #include <lvgl.h>
 #include <esp_log.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -309,61 +310,86 @@ void update_header_clock() {
 // allarmi e stima warmup. Va chiamata a 10 Hz dal task LVGL.
 void background_tick() {
 
-    // Se la Modalita' Simulazione e' attiva, genera dati telemetrici sintetici
+    // Simulazione dati (Modalita' debug > Simulazione): un ciclo di guida
+    // coerente con valori fisicamente plausibili. Motore acceso al minimo,
+    // accelerazioni con cambi marcia e rilasci; il boost segue giri e
+    // farfalla, acqua e olio partono dalla temperatura ambiente e si scaldano
+    // in ~2 minuti (cosi' si provano anche le icone del riscaldamento).
+    static bool sim_was_on = false;
     if (abarth::settings::current().demo_mode) {
-        static float sim_rpm   = 900.0f;
-        static float sim_speed = 0.0f;
-        static float sim_boost = -0.20f;
-        static bool  sim_accel = true;
-
-        if (sim_accel) {
-            sim_rpm   += 80.0f;
-            sim_speed += 1.2f;
-            sim_boost += 0.03f;
-            if (sim_rpm >= 6300.0f) {
-                sim_rpm   = 3400.0f; // Cambio marcia!
-                sim_boost = 0.35f;
-                if (sim_speed >= 170.0f) {
-                    sim_accel = false;
-                }
-            }
-        } else {
-            sim_rpm   -= 90.0f;
-            sim_speed -= 1.5f;
-            sim_boost -= 0.04f;
-            if (sim_speed <= 10.0f) {
-                sim_rpm   = 900.0f;
-                sim_speed = 0.0f;
-                sim_boost = -0.20f;
-                sim_accel = true;
-            }
+        constexpr float kAmbient = 18.0f;
+        static float rpm = 800.0f, speed = 0.0f, thr = 2.0f, boost = -0.6f;
+        static float coolant = kAmbient, oil = kAmbient, fuel = 62.0f, dist = 1250.0f;
+        static int   phase = 0;      // 0 minimo, 1 accelera, 2 rilascia
+        static int   phase_ticks = 0;
+        if (!sim_was_on) {            // ogni attivazione riparte "a motore freddo"
+            rpm = 800.0f; speed = 0.0f; thr = 2.0f; boost = -0.6f;
+            coolant = kAmbient; oil = kAmbient; phase = 0; phase_ticks = 0;
         }
+        ++phase_ticks;
+        switch (phase) {
+            case 0:   // minimo, fermo
+                thr = 2.0f;
+                rpm += (800.0f - rpm) * 0.2f;
+                speed = std::max(0.0f, speed - 1.5f);
+                if (phase_ticks > 40) { phase = 1; phase_ticks = 0; }
+                break;
+            case 1:   // accelerazione con cambi marcia
+                thr = 85.0f;
+                rpm += 70.0f;
+                speed += 1.1f;
+                if (rpm >= 6300.0f) rpm = 3600.0f;               // cambio marcia
+                if (speed >= 150.0f) { phase = 2; phase_ticks = 0; }
+                break;
+            default:  // rilascio: farfalla chiusa, giri e velocita' scendono
+                thr = 0.0f;
+                rpm = std::max(1100.0f, rpm - 60.0f);
+                if (rpm <= 1300.0f && speed > 20.0f) rpm = 2600.0f; // scalata
+                speed = std::max(0.0f, speed - 1.4f);
+                if (speed <= 0.0f) { phase = 0; phase_ticks = 0; }
+                break;
+        }
+        rpm = std::min(6800.0f, std::max(750.0f, rpm));
+        const float load = std::min(100.0f, std::max(0.0f, 0.15f * thr + thr * 0.85f * (rpm / 6800.0f) + 8.0f));
+        // boost: vuoto a farfalla chiusa (fino a ~-0,7 bar), pressione con
+        // farfalla aperta e giri alti (max ~1,3 bar), filtrato come un turbo
+        float target = -0.65f;
+        if (thr > 20.0f) target = -0.2f + (thr / 100.0f) * std::min(1.0f, (rpm - 1800.0f) / 2500.0f) * 1.5f;
+        target = std::min(1.3f, std::max(-0.8f, target));
+        boost += (target - boost) * 0.25f;
+        // temperature: acqua verso ~90 °C, olio la insegue piu' lentamente
+        coolant += (91.0f - coolant) * 0.0013f * (1.0f + load / 100.0f);
+        oil += (coolant + load * 0.12f - oil) * 0.0007f;
+        fuel = std::max(0.0f, fuel - 0.0004f * (1.0f + load / 50.0f));
+        dist += speed / 36000.0f;   // km per tick a 10 Hz
+        const float fuel_rate = 0.7f + load / 100.0f * 11.0f;   // L/h
+        const float afr = boost > 0.2f ? 14.7f - (boost - 0.2f) * 2.6f : (thr < 1.0f && speed > 20.0f ? 19.5f : 14.7f);
 
         auto& ds = abarth::data::store();
-        ds.set(Metric::Rpm, sim_rpm);
-        ds.set(Metric::Speed, sim_speed);
-        ds.set(Metric::EngineLoad, (sim_rpm / 7000.0f) * 100.0f);
-        ds.set(Metric::Throttle, (sim_rpm / 7000.0f) * 95.0f);
-        ds.set(Metric::BoostRelBar, sim_boost);
-        ds.set(Metric::CoolantTempC, 88.0f);
-        ds.set(Metric::OilTempC, 95.0f);
-        ds.set(Metric::IntakeAirTempC, 28.0f);
-        ds.set(Metric::AmbientTempC, 22.0f);
-        ds.set(Metric::EgtC, 640.0f);
-        ds.set(Metric::BoostKpa, 145.0f);
-        ds.set(Metric::BatteryVolts, 13.8f);
-        ds.set(Metric::Afr, 14.7f);
-        // --- Demo: carburante ---
-        ds.set(Metric::FuelLevelPct, 62.0f);
-        ds.set(Metric::FuelRateLh, (sim_rpm / 7000.0f) * 7.5f);     // 0..7.5 L/h
-        ds.set(Metric::FuelPressureKpa, 380.0f);
-        ds.set(Metric::FuelConsumptionL100,
-               sim_speed > 5.0f ? ((sim_rpm / 7000.0f) * 7.5f) / sim_speed * 100.0f : 0.0f);
-        ds.set(Metric::FuelTempC, 42.0f);
-        ds.set(Metric::FuelInjectionTiming, 12.5f);
+        ds.set(Metric::Rpm, rpm);
+        ds.set(Metric::Speed, speed);
+        ds.set(Metric::Throttle, thr);
+        ds.set(Metric::EngineLoad, load);
+        ds.set(Metric::BoostRelBar, boost);
+        ds.set(Metric::BoostKpa, std::min(255.0f, std::max(20.0f, (boost + 1.013f) * 100.0f)));  // MAP assoluta
+        ds.set(Metric::CoolantTempC, coolant);
+        ds.set(Metric::OilTempC, oil);
+        ds.set(Metric::OilPressureBar, std::min(5.5f, std::max(0.8f, 1.0f + rpm / 6800.0f * 3.5f + (90.0f - oil) * 0.012f)));
+        ds.set(Metric::IntakeAirTempC, std::max(-10.0f, kAmbient + 8.0f + std::max(0.0f, boost) * 14.0f));
+        ds.set(Metric::AmbientTempC, kAmbient);
+        ds.set(Metric::EgtC, 320.0f + load * 5.0f + rpm * 0.035f);
+        ds.set(Metric::BatteryVolts, 14.1f + 0.2f * ((phase_ticks % 20) < 10 ? 1.0f : -1.0f) * 0.5f);
+        ds.set(Metric::Afr, afr);
+        ds.set(Metric::FuelLevelPct, fuel);
+        ds.set(Metric::FuelRateLh, fuel_rate);
+        ds.set(Metric::FuelPressureKpa, 350.0f + std::max(0.0f, boost) * 100.0f);   // regolata sul collettore
+        ds.set(Metric::FuelConsumptionL100, speed > 5.0f ? fuel_rate / speed * 100.0f : 0.0f);
+        ds.set(Metric::FuelTempC, kAmbient + (coolant - kAmbient) * 0.3f);
+        ds.set(Metric::FuelInjectionTiming, -4.0f + rpm / 6800.0f * 20.0f);   // gradi, puo' essere negativo
         ds.set(Metric::EthanolPct, 0.0f);   // E0 in Italia di default
-        ds.set(Metric::DistanceSinceClear, 1250.0f + sim_speed);
+        ds.set(Metric::DistanceSinceClear, dist);
     }
+    sim_was_on = abarth::settings::current().demo_mode;
 
     // Valutazione regole allarmi e avvisi telematici
     abarth::config::alerts().checkAlerts();

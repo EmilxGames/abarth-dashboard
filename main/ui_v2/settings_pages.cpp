@@ -21,6 +21,7 @@
 #include "config/connection.h"
 #include "config/settings.h"
 #include "config/warmup_manager.h"
+#include "display/lvgl_v8_port.h"
 #include "obd/ble_stream.h"
 #include "obd/obd_manager.h"
 #include "storage/ota_updater.h"
@@ -811,9 +812,10 @@ void page_sistema() {
                    ota::ota().getCurrentPartitionName().c_str(), __DATE__, __TIME__);
     });
     sp::rowInfo(l, []() {
-        return fmt("Letture OBD: %lu ok \xC2\xB7 %lu errori\nFrame CAN: %lu \xC2\xB7 errori %lu",
+        return fmt("Letture OBD: %lu ok \xC2\xB7 %lu errori\nFrame CAN: %lu \xC2\xB7 errori %lu\nTouch: %lu letture vuote corrette",
                    (unsigned long)obd::obd().successfulReads(), (unsigned long)obd::obd().failedReads(),
-                   (unsigned long)can::can().totalRxFrames(), (unsigned long)can::can().totalErrors());
+                   (unsigned long)can::can().totalRxFrames(), (unsigned long)can::can().totalErrors(),
+                   (unsigned long)lvgl_port_touch_bridged_count());
     });
     sp::section(l, "STRUMENTI");
     sp::rowToggle(l, "Modalit\xC3\xA0 debug", []() { return current().debug_mode; }, [](bool v) { setDebugMode(v); });
