@@ -40,10 +40,31 @@ lv_obj_t* g_dots[kPages] = {};
 Page g_current = Page::Guida;
 int32_t g_dots_x0 = 0;
 
-constexpr int32_t kDot = 9, kDotActiveW = 30, kDotGap = 10;
+constexpr int32_t kDot = 12, kDotActiveW = 38, kDotGap = 16;   // pallini piu' visibili
+lv_obj_t* g_title = nullptr;          ///< nome della pagina al centro della barra di stato
+lv_timer_t* g_title_timer = nullptr;
+const char* const kPageNames[] = {"GUIDA", "TEMPERATURE", "PRESSIONI", "ELETTRICO", "PERSONALE", "IMPOSTAZIONI"};
 constexpr int32_t kGearW = 72;   ///< pulsante rapido Impostazioni in basso a destra
 constexpr int32_t kGearH = 48;   ///< + 8 px di area extra per lato = tocco 88x64
 Page g_before_setup = Page::Guida;
+
+void title_settle_cb(lv_timer_t* t) {
+    // dopo ~1 s il nome torna alla dimensione normale (si ridisegna solo l'etichetta)
+    lv_obj_set_style_text_font(g_title, fontStatus(), 0);
+    lv_obj_set_style_text_letter_space(g_title, kLabelLetterSpace, 0);
+    lv_obj_align(g_title, LV_ALIGN_TOP_MID, 0, kStatusTop);
+    lv_timer_delete(t);
+    g_title_timer = nullptr;
+}
+
+void show_title(int idx) {
+    lv_label_set_text(g_title, kPageNames[idx]);
+    lv_obj_set_style_text_font(g_title, fontBody(), 0);
+    lv_obj_set_style_text_letter_space(g_title, 4, 0);
+    lv_obj_align(g_title, LV_ALIGN_TOP_MID, 0, kStatusTop - 3);
+    if (g_title_timer) lv_timer_reset(g_title_timer);
+    else g_title_timer = lv_timer_create(title_settle_cb, 1000, nullptr);
+}
 
 void layout_dots() {
     // pallini da 9 px, quello attivo e' una pillola 30x9 nel colore accento
@@ -98,7 +119,12 @@ void on_timer(lv_timer_t*) {
 
 void gesture_cb(lv_event_t*) {
     if (personale::editing() || settings_pages::inSubPage()) return;  // editor/sottopagine: niente swipe
-    const lv_dir_t d = lv_indev_get_gesture_dir(lv_indev_active());
+    lv_indev_t* indev = lv_indev_active();
+    const lv_dir_t d = lv_indev_get_gesture_dir(indev);
+    // un solo cambio pagina per swipe: il resto del movimento viene ignorato
+    // fino al rilascio (altrimenti le schede toccabili della pagina nuova,
+    // es. PERSONALE, "riprendono" il gesto e si salta una pagina)
+    if (d == LV_DIR_LEFT || d == LV_DIR_RIGHT) lv_indev_wait_release(indev);
     const int cur = static_cast<int>(g_current);
     if (d == LV_DIR_LEFT && cur < kPages - 1) showPage(static_cast<Page>(cur + 1));
     else if (d == LV_DIR_RIGHT && cur > 0) showPage(static_cast<Page>(cur - 1));
@@ -138,6 +164,7 @@ void showPage(Page p) {
     lv_obj_remove_flag(g_pages[idx], LV_OBJ_FLAG_HIDDEN);
     g_current = p;
     layout_dots();
+    if (g_title) show_title(idx);
     pages::onShow(p);
 }
 
@@ -157,6 +184,8 @@ void build() {
     // Barra di stato: ora a sinistra, collegamento a destra
     g_time = w::label(g_scr, "", fontStatus(), kSecondary);
     lv_obj_set_pos(g_time, kStatusX, kStatusTop);
+    g_title = w::label(g_scr, "", fontStatus(), kText, true);
+    lv_obj_align(g_title, LV_ALIGN_TOP_MID, 0, kStatusTop);
     g_conn = w::label(g_scr, "", fontStatus(), kDim);
     lv_obj_set_pos(g_conn, W - kStatusX - 80, kStatusTop);
     // pallino stato collegamento a sinistra del testo (posizione fissa)

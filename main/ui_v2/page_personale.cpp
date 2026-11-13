@@ -42,6 +42,7 @@ lv_obj_t* g_grid = nullptr;     ///< contenitore delle schede (ricostruito al ca
 lv_obj_t* g_sheet = nullptr;    ///< pannello dell'editor
 lv_obj_t* g_picker = nullptr;   ///< elenco grandezze
 lv_obj_t* g_sheet_info = nullptr;
+lv_obj_t* g_head = nullptr;     ///< suggerimento + pulsante Modifica
 int32_t   g_w = 0, g_h = 0, g_y0 = 0;
 custom::Layout g_layout;
 SlotView  g_views[kSlots];
@@ -49,14 +50,15 @@ bool      g_editing = false;
 int       g_selected = -1;
 bool      g_moving = false;
 
-int32_t row_h() { return (kCardsBot - kCardsTop - 3 * kGap) / 4; }
+constexpr int32_t kHeadH = 56;   ///< riga in alto: suggerimento + pulsante Modifica
+int32_t row_h() { return (kCardsBot - kCardsTop - kHeadH - 3 * kGap) / 4; }
 int32_t half_w() { return (g_w - 2 * kMargin - kGap) / 2; }
 
 void slot_rect(int s, int32_t& x, int32_t& y, int32_t& wd, int32_t& ht) {
     const int r = s / custom::kCols, c = s % custom::kCols;
     const int32_t cw = g_w - 2 * kMargin;
     x = kMargin + (c ? half_w() + kGap : 0);
-    y = kCardsTop - g_y0 + r * (row_h() + kGap);
+    y = kCardsTop + kHeadH - g_y0 + r * (row_h() + kGap);
     wd = g_layout.slots[s].span == 2 ? cw : (c ? cw - half_w() - kGap : half_w());
     ht = row_h();
 }
@@ -69,6 +71,7 @@ void card_long_cb(lv_event_t* e) {
     if (g_editing) return;
     g_editing = true;
     g_selected = static_cast<int>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    g_layout.reserved[0] = 1;
     rebuild();
 }
 
@@ -237,15 +240,54 @@ void build_sheet() {
     }
 }
 
+void edit_btn_cb(lv_event_t*) {
+    if (g_editing) {   // "Fatto": salva e chiude
+        custom::save(g_layout);
+        g_editing = false;
+        g_selected = -1;
+        g_moving = false;
+    } else {
+        g_editing = true;
+        g_moving = false;
+        g_selected = 0;
+        while (g_selected < kSlots && custom::isCovered(g_layout, g_selected)) ++g_selected;
+        g_layout.reserved[0] = 1;   // suggerimento visto: non mostrarlo piu'
+    }
+    rebuild();
+}
+
+void build_head() {
+    // Riga in alto: suggerimento (finche' non si e' mai entrati nell'editor) e
+    // pulsante esplicito "Modifica" (la pressione lunga non si scopre da soli)
+    const int32_t y = kCardsTop - g_y0;
+    const bool hint = !g_editing && g_layout.reserved[0] == 0;
+    if (hint || g_editing) {   // il nome della pagina e' gia' nella barra in alto
+        lv_obj_t* l = w::label(g_grid, g_editing ? "Tocca una scheda per modificarla" : "Tieni premuta una scheda per modificarla",
+                               fontUnit(), kSecondary);
+        lv_obj_set_pos(l, kMargin + 6, y + (kHeadH - 16 - lv_font_get_line_height(fontUnit())) / 2);
+    }
+    const int32_t bw = 150;
+    lv_obj_t* b = w::box(g_grid, g_w - kMargin - bw, y, bw, kHeadH - 16, g_editing ? accent() : kCard, 18);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(b, 10);
+    lv_obj_remove_flag(b, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_style_bg_color(b, c(kCardPress), LV_STATE_PRESSED);
+    lv_obj_t* bl = w::label(b, g_editing ? "Fatto" : "Modifica", fontBody(), g_editing ? kBg : kText);
+    lv_obj_center(bl);
+    lv_obj_add_event_cb(b, edit_btn_cb, LV_EVENT_CLICKED, nullptr);
+}
+
 void rebuild() {
     if (g_sheet) { lv_obj_delete(g_sheet); g_sheet = nullptr; }
     lv_obj_clean(g_grid);
+    build_head();
     for (int s = 0; s < kSlots; ++s) build_slot(s);
     if (g_editing) build_sheet();
 }
 }  // namespace
 
 bool editing() { return g_editing; }
+int debugSlotType(int s) { return (s >= 0 && s < kSlots) ? g_layout.slots[s].type : -1; }
 
 void debugMode(int mode) {
     if (g_picker) { lv_obj_delete(g_picker); g_picker = nullptr; }

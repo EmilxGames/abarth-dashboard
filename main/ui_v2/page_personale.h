@@ -10,4 +10,6 @@ void update(int64_t now_ms);
 bool editing();
 /// Solo debug/screenshot: 0 = esci, 1 = editor con scheda 3 selezionata, 2 = elenco grandezze
 void debugMode(int mode);
+/// Solo test: tipo di widget salvato nello slot s
+int debugSlotType(int s);
 }

@@ -36,7 +36,7 @@ struct Slot {
 
 struct Layout {
     uint8_t version = kLayoutVersion;
-    uint8_t reserved[3] = {};
+    uint8_t reserved[3] = {};   ///< [0] = suggerimento PERSONALE gia' visto
     Slot    slots[kSlots];
 };
 

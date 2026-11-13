@@ -152,8 +152,47 @@ void gear_test() {
              (int)debugCurrentPage(), settings_pages::debugDepth(), ok);
 }
 
+void hswipe(int32_t x0, int32_t x1, int32_t y) {
+    for (int i = 0; i <= 12; ++i) { lvgl_port_debug_touch(true, true, x0 + (x1 - x0) * i / 12, y); vTaskDelay(pdMS_TO_TICKS(16)); }
+    lvgl_port_debug_touch(true, false, x1, y); vTaskDelay(pdMS_TO_TICKS(80)); lvgl_port_debug_touch(false, false, 0, 0);
+    vTaskDelay(pdMS_TO_TICKS(400));
+}
+
+void page_tests() {
+    // swipe da GUIDA fino a IMPOSTAZIONI: ogni swipe deve passare alla pagina successiva
+    if (lvgl_port_lock(-1)) { showPage(Page::Guida); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(400));
+    int ok = 0;
+    for (int i = 1; i < static_cast<int>(Page::Count); ++i) {
+        hswipe(520, 80, 500);
+        const bool good = static_cast<int>(debugCurrentPage()) == i;
+        ok += good;
+        ESP_LOGW("TOUCH_TEST", "swipe -> pagina %d (attesa %d) %s", (int)debugCurrentPage(), i, good ? "OK" : "ERRORE");
+    }
+    // PERSONALE: pulsante Modifica, scheda 3, Tipo, Fatto
+    if (lvgl_port_lock(-1)) { showPage(Page::Personale); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(400));
+    dump(20);                                   // pagina con suggerimento e pulsante
+    tap(LV_HOR_RES - 24 - 75, 66 + 20);          // "Modifica"
+    vTaskDelay(pdMS_TO_TICKS(400));
+    const bool ed = personale::editing();
+    const int before = personale::debugSlotType(0);
+    dump(21);                                   // editor aperto
+    // lo slot 0 e' selezionato: il pannello e' in basso; "Tipo" e' il 2o pulsante (colonna destra, riga 1)
+    tap(LV_HOR_RES - 24 - 30 - 120, 970 - (3 * 72 + 2 * 18 + 60) + 30 + 36);
+    vTaskDelay(pdMS_TO_TICKS(400));
+    const int after = personale::debugSlotType(0);
+    tap(LV_HOR_RES - 24 - 75, 66 + 20);          // "Fatto"
+    vTaskDelay(pdMS_TO_TICKS(400));
+    ESP_LOGW("TOUCH_TEST", "PERSONALE: editor aperto=%d tipo slot0 %d -> %d, chiuso=%d  %s",
+             ed, before, after, !personale::editing(), (ed && after != before && !personale::editing()) ? "OK" : "ERRORE");
+    // rimette il tipo di prima
+    if (after != before && lvgl_port_lock(-1)) { personale::debugMode(0); lvgl_port_unlock(); }
+}
+
 void task(void*) {
     vTaskDelay(pdMS_TO_TICKS(15000));
+    page_tests();
     gear_test();
     if (lvgl_port_lock(-1)) { showPage(Page::Guida); lvgl_port_unlock(); }
     vTaskDelay(pdMS_TO_TICKS(500));
