@@ -11,13 +11,16 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "data/data_store.h"
+#include "config/alert_manager.h"
+#include "config/settings.h"
+#include "config/warmup_manager.h"
 #include "display/lvgl_v8_port.h"
 #include "ui_v2/ui_v2.h"
 #include "ui_v2/page_personale.h"
 #include "ui_v2/settings_pages.h"
 
 namespace abarth::display { void* debugFramebuffer(); }
-namespace abarth::ui_v2 { Page debugCurrentPage(); }
+namespace abarth::ui_v2 { Page debugCurrentPage(); bool debugWarmBlink(); }
 extern "C" void lvgl_port_debug_touch(bool active, bool pressed, int32_t x, int32_t y);
 
 namespace abarth::ui_v2::debug_shot {
@@ -94,7 +97,7 @@ void touch_tests() {
     // verifica che la sottopagina scorra e che non si apra un'altra categoria.
     if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); showPage(Page::Setup); lvgl_port_unlock(); }
     vTaskDelay(pdMS_TO_TICKS(400));
-    for (int n = 0; n < 11; ++n) {
+    for (int n = 0; n < settings_pages::debugCategoryCount(); ++n) {
         // righe dell'elenco: inizio scheda y=56+10+34, righe 72 px + 1 di separatore
         const int32_t y = 56 + 8 + 34 + n * 73 + 36;
         tap(300, y);
@@ -169,25 +172,83 @@ void page_tests() {
         ok += good;
         ESP_LOGW("TOUCH_TEST", "swipe -> pagina %d (attesa %d) %s", (int)debugCurrentPage(), i, good ? "OK" : "ERRORE");
     }
-    // PERSONALE: pulsante Modifica, scheda 3, Tipo, Fatto
+    // PERSONALE: matita, Larghezza, Altezza, aggiungi scheda, scroll, spunta
+    auto center_tap = [](lv_obj_t* o) {
+        if (!o) return;
+        lv_area_t a;
+        if (lvgl_port_lock(-1)) { lv_obj_get_coords(o, &a); lvgl_port_unlock(); }
+        tap((a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2);
+        vTaskDelay(pdMS_TO_TICKS(400));
+    };
     if (lvgl_port_lock(-1)) { showPage(Page::Personale); lvgl_port_unlock(); }
     vTaskDelay(pdMS_TO_TICKS(400));
-    dump(20);                                   // pagina con suggerimento e pulsante
-    tap(LV_HOR_RES - 24 - 75, 66 + 20);          // "Modifica"
-    vTaskDelay(pdMS_TO_TICKS(400));
+    dump(20);
+    const int n0 = personale::debugCardCount();
+    center_tap(personale::debugPencil());
     const bool ed = personale::editing();
-    const int before = personale::debugSlotType(0);
-    dump(21);                                   // editor aperto
-    // lo slot 0 e' selezionato: il pannello e' in basso; "Tipo" e' il 2o pulsante (colonna destra, riga 1)
-    tap(LV_HOR_RES - 24 - 30 - 120, 970 - (3 * 72 + 2 * 18 + 60) + 30 + 36);
-    vTaskDelay(pdMS_TO_TICKS(400));
-    const int after = personale::debugSlotType(0);
-    tap(LV_HOR_RES - 24 - 75, 66 + 20);          // "Fatto"
-    vTaskDelay(pdMS_TO_TICKS(400));
-    ESP_LOGW("TOUCH_TEST", "PERSONALE: editor aperto=%d tipo slot0 %d -> %d, chiuso=%d  %s",
-             ed, before, after, !personale::editing(), (ed && after != before && !personale::editing()) ? "OK" : "ERRORE");
-    // rimette il tipo di prima
-    if (after != before && lvgl_port_lock(-1)) { personale::debugMode(0); lvgl_port_unlock(); }
+    dump(21);
+    center_tap(personale::debugSheetButton(2));   // Larghezza
+    center_tap(personale::debugSheetButton(3));   // Altezza
+    // scorre la griglia verso il basso (trascinando sopra il pannello editor)
+    drag(300, 650, 300, 200);
+    drag(300, 650, 300, 200);
+    vTaskDelay(pdMS_TO_TICKS(300));
+    dump(22);
+    int32_t sy = 0;
+    if (lvgl_port_lock(-1)) { sy = lv_obj_get_scroll_y(personale::debugGrid()); lvgl_port_unlock(); }
+    const bool scrolled = sy > 0;
+    center_tap(personale::debugPencil());          // spunta: salva
+    const bool closed = !personale::editing();
+    ESP_LOGW("TOUCH_TEST", "PERSONALE v2: editor=%d scroll=%ld chiuso=%d schede=%d %s", ed, (long)sy, closed, n0,
+             (ed && closed && scrolled) ? "OK" : "ERRORE");
+}
+
+void warmup_shots() {
+    using data::Metric;
+    const auto sv = settings::current();
+    float coolant = 30;
+    auto feed = [&](int ms) {   // dati demo, acqua fissa e giri al minimo (niente allarme freddo)
+        for (int k = 0; k < ms / 100; ++k) {
+            fill_demo();
+            data::store().set(Metric::CoolantTempC, coolant);
+            data::store().set(Metric::Rpm, 900);
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    };
+    auto dump_phase = [&](bool on, int idx) {   // aspetta la fase del lampeggio richiesta
+        for (int k = 0; k < 40 && debugWarmBlink() != on; ++k) { feed(100); }
+        vTaskDelay(pdMS_TO_TICKS(80));
+        dump(idx);
+    };
+    // niente banner "acqua alta" sopra la barra durante la prova surriscaldamento
+    auto* hot = config::alerts().getRule(config::AlertType::HighCoolantTemp);
+    const bool hot_en = hot ? hot->enabled : false;
+    if (lvgl_port_lock(-1)) { showPage(Page::Guida); lvgl_port_unlock(); }
+    settings::setOilWarmupCountdownSec(180);
+    warmup::warmup_mgr().resetCycle();
+    coolant = 30; feed(1500);
+    coolant = 52; feed(2500);           // 1) freddo: acqua a meta' strada, olio vuoto
+    dump(1);
+    coolant = 82; feed(45000);          // 2) conto alla rovescia da ~45 s
+    dump_phase(true, 2);                //    fase accesa (ambra)
+    dump_phase(false, 3);               //    fase spenta (grigia)
+    if (lvgl_port_lock(-1)) { showPage(Page::Setup); lvgl_port_unlock(); }   // titolo lungo + conto
+    feed(1500);
+    dump(7);
+    if (lvgl_port_lock(-1)) { showPage(Page::Guida); lvgl_port_unlock(); }
+    settings::setOilWarmupCountdownSec(60);   // ciclo corto per arrivare "a regime"
+    warmup::warmup_mgr().resetCycle();
+    feed(62500);                        // 3) a regime: banner "Olio in temperatura"
+    dump(4);
+    feed(6000);                         //    il banner si chiude da solo dopo 5 s
+    dump(5);
+    if (hot) hot->enabled = false;      // 4) acqua surriscaldata (soglia di riserva 105 C)
+    coolant = 112; feed(2500);
+    dump(6);
+    if (hot) hot->enabled = hot_en;
+    coolant = 82; feed(500);
+    settings::setOilWarmupCountdownSec(sv.oil_warmup_countdown_sec);   // ripristina
+    warmup::warmup_mgr().resetCycle();
 }
 
 void task(void*) {
@@ -202,7 +263,7 @@ void task(void*) {
     if (lvgl_port_lock(-1)) { showPage(Page::Setup); lvgl_port_unlock(); }
     vTaskDelay(pdMS_TO_TICKS(500));
     dump(30);
-    for (int n = 0; n < 11; ++n) {
+    for (int n = 0; n < settings_pages::debugCategoryCount(); ++n) {
         if (lvgl_port_lock(-1)) { settings_pages::debugOpen(n); lvgl_port_unlock(); }
         for (int k = 0; k < 8; ++k) { fill_demo(); vTaskDelay(pdMS_TO_TICKS(100)); }
         dump(40 + n * 2);
@@ -211,6 +272,7 @@ void task(void*) {
         if (more) { vTaskDelay(pdMS_TO_TICKS(500)); dump(41 + n * 2); }
     }
     if (lvgl_port_lock(-1)) { settings_pages::debugOpen(-1); showPage(Page::Guida); lvgl_port_unlock(); }
+    warmup_shots();
     vTaskDelete(nullptr);
 }
 }  // namespace

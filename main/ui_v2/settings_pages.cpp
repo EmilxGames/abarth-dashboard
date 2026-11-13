@@ -428,15 +428,15 @@ void page_allarmi() {
     sp::rowStepper(l, "Acqua a regime", []() { return fmt("%.0f \xC2\xB0" "C", current().oil_warmup_water_temp); },
                    []() { setOilWarmupWaterTemp(current().oil_warmup_water_temp - 1); },
                    []() { setOilWarmupWaterTemp(current().oil_warmup_water_temp + 1); });
-    sp::rowStepper(l, "Tempo olio", []() { return fmt("%u s", current().oil_warmup_countdown_sec); },
-                   []() { const auto v = current().oil_warmup_countdown_sec; setOilWarmupCountdownSec(v > 30 ? v - 30 : 0); },
+    sp::rowStepper(l, "Tempo olio", []() { const unsigned v = current().oil_warmup_countdown_sec; return fmt("%u:%02u min", v / 60, v % 60); },
+                   []() { const auto v = current().oil_warmup_countdown_sec; setOilWarmupCountdownSec(v > 90 ? v - 30 : 60); },
                    []() { setOilWarmupCountdownSec(current().oil_warmup_countdown_sec + 30); });
     sp::rowStepper(l, "Giri max a freddo", []() { return fmt("%.0f", current().oil_cold_rpm_limit); },
                    []() { setOilColdRpmLimit(current().oil_cold_rpm_limit - 100); },
                    []() { setOilColdRpmLimit(current().oil_cold_rpm_limit + 100); });
     sp::rowToggle(l, "Olio virtuale in plancia", []() { return current().oil_virtual_temp_display; }, [](bool v) { setOilVirtualTempDisplay(v); });
     sp::rowAction(l, "Prova allarme freddo", []() { warmup::warmup_mgr().triggerColdAlert(3400.0f, 52.0f, true); });
-    sp::rowAction(l, "Prova motore a regime", []() { warmup::warmup_mgr().triggerReadyAlert(true); });
+    sp::rowAction(l, "Prova olio in temperatura", []() { warmup::warmup_mgr().triggerReadyAlert(true); });
     sp::rowAction(l, "Riavvia ciclo riscaldamento", []() { warmup::warmup_mgr().resetCycle(); });
 }
 

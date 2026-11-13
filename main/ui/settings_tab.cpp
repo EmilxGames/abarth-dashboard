@@ -4192,10 +4192,10 @@ void render_category(uint8_t cat_idx, uint16_t subtab_idx) {
                             abarth::settings::setOilWarmupWaterTemp(v);
                             std::snprintf(buf, sizeof(buf), "%.0f \xC2\xB0""C", v);
                         } else if (c->ptype == WarmupParamType::CountdownSec) {
-                            if (v < 30.0f) v = 30.0f;
-                            if (v > 1800.0f) v = 1800.0f;
-                            uint16_t s_val = static_cast<uint16_t>(v);
-                            abarth::settings::setOilWarmupCountdownSec(s_val);
+                            if (v < 60.0f) v = 60.0f;      // 1-15 min, passi di 30 s (arrotondato nel setter)
+                            if (v > 900.0f) v = 900.0f;
+                            abarth::settings::setOilWarmupCountdownSec(static_cast<uint16_t>(v));
+                            const unsigned s_val = abarth::settings::current().oil_warmup_countdown_sec;
                             std::snprintf(buf, sizeof(buf), "%u min (%us)", s_val / 60, s_val);
                         } else if (c->ptype == WarmupParamType::ColdRpmLimit) {
                             if (v < 1500.0f) v = 1500.0f;

@@ -10,6 +10,8 @@
 namespace abarth::warmup {
 
 static const char* TAG = "warmup";
+/// di quanti gradi l'acqua deve scendere sotto la soglia per far ripartire il ciclo
+constexpr float kResetMarginC = 15.0f;
 
 WarmupManager& WarmupManager::instance() {
     static WarmupManager inst;
@@ -77,8 +79,10 @@ void WarmupManager::update() {
         m_water_peak = water_temp;
     }
 
-    // Se il motore era Ready ma l'acqua scende sotto i 55°C (auto spenta per lungo tempo), resetta
-    if (m_state == WarmupState::Ready && water_temp > 0.0f && water_temp < 55.0f) {
+    // Se l'acqua scende molto sotto la soglia (auto rimasta spenta a lungo),
+    // il ciclo riparte da capo: vale sia durante il conto alla rovescia sia a regime
+    if ((m_state == WarmupState::Warming || m_state == WarmupState::Ready) && s_coolant.valid() &&
+        water_temp < s.oil_warmup_water_temp - kResetMarginC) {
         resetCycle();
     }
 
@@ -89,7 +93,7 @@ void WarmupManager::update() {
             break;
 
         case WarmupState::Cold: {
-            // Se l'acqua raggiunge o supera la soglia impostata (default 80°C), avvia il countdown
+            // Se l'acqua raggiunge o supera la soglia impostata (default 75°C), avvia il countdown
             if (water_temp >= s.oil_warmup_water_temp) {
                 m_state = WarmupState::Warming;
                 m_remaining_sec = s.oil_warmup_countdown_sec;

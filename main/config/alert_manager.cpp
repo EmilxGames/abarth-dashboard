@@ -937,8 +937,8 @@ void AlertManager::triggerWarmupCompleteAlert(bool is_test) {
     }
 
     g_alert_modal = make_alert_banner_host();
-    if (v2_alert(is_test ? "[Prova] Motore in temperatura" : "Motore in temperatura",
-                 "Acqua e olio sono a regime: il motore \xC3\xA8 pronto. Buona guida.", abarth::ui_v2::AlertLevel::Info, 7, "OK")) return;
+    if (v2_alert(is_test ? "[Prova] Olio in temperatura" : "Olio in temperatura",
+                 "Puoi usare tutto il motore. Buona guida.", abarth::ui_v2::AlertLevel::Info, 5, "OK")) return;
 
     const bool is_portrait = (LV_HOR_RES < LV_VER_RES);
     const int popup_w = is_portrait ? 520 : 560;

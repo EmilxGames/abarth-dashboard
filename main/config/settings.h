@@ -133,10 +133,10 @@ struct Settings {
     // --- Warmup e Stima Virtuale Olio Motore ---
     /// Abilitazione della logica di warmup e protezione motore
     bool        oil_warmup_enabled        = true;
-    /// Temperatura refrigerante (°C) per l'avvio del countdown riscaldamento olio (default 80°C)
-    float       oil_warmup_water_temp     = 80.0f;
-    /// Durata countdown riscaldamento olio in secondi (default 300 s = 5 min)
-    uint16_t    oil_warmup_countdown_sec  = 300;
+    /// Temperatura refrigerante (°C) per l'avvio del countdown riscaldamento olio (default 75°C)
+    float       oil_warmup_water_temp     = 75.0f;
+    /// Durata countdown riscaldamento olio in secondi (default 180 s = 3 min; 60-900 a passi di 30 s)
+    uint16_t    oil_warmup_countdown_sec  = 180;
     /// Soglia limite giri a freddo per avviso di protezione (default 3000 RPM)
     float       oil_cold_rpm_limit        = 3000.0f;
     /// Calcola e mostra la temperatura olio stimata sul cruscotto e temperature

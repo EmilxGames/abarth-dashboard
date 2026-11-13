@@ -38,6 +38,7 @@ constexpr const char* kKeyDebugMode   = "dbgmode";
 constexpr const char* kKeyOilWarmupEn   = "ow_en";
 constexpr const char* kKeyOilWarmupWTemp= "ow_wtemp";
 constexpr const char* kKeyOilWarmupTime = "ow_time";
+constexpr const char* kKeyOilWarmupV2   = "ow_v2";     ///< nuovi predefiniti gia' applicati
 constexpr const char* kKeyOilColdRpm    = "ow_rpm";
 constexpr const char* kKeyOilVirtDisplay= "ow_vdisp";
 constexpr const char* kKeyCustTabEn     = "ctab_en";
@@ -118,6 +119,18 @@ void save_str(const char* key, const std::string& v) {
         nvs_commit(g_handle);
     }
 }
+
+/// Soglia acqua per il riscaldamento olio: 50-100 °C
+float clampWarmupWaterTemp(float t) {
+    if (!(t >= 50.0f)) return 50.0f;
+    return t > 100.0f ? 100.0f : t;
+}
+/// Durata riscaldamento olio: 1-15 minuti a passi di 30 s
+uint16_t clampWarmupCountdown(uint32_t sec) {
+    if (sec < 60) sec = 60;
+    if (sec > 900) sec = 900;
+    return static_cast<uint16_t>((sec + 15) / 30 * 30);
+}
 }  // namespace
 
 bool init() {
@@ -152,8 +165,21 @@ bool init() {
     g_settings.saved_wifi_pass  = load_str(kKeyWifiPass);
     g_settings.disabled_metrics_mask = load_u32(kKeyDisMetrics, 0);
     g_settings.oil_warmup_enabled = load_u8(kKeyOilWarmupEn, g_settings.oil_warmup_enabled ? 1 : 0) != 0;
-    g_settings.oil_warmup_water_temp = static_cast<float>(load_u8(kKeyOilWarmupWTemp, static_cast<uint8_t>(g_settings.oil_warmup_water_temp)));
-    g_settings.oil_warmup_countdown_sec = static_cast<uint16_t>(load_u32(kKeyOilWarmupTime, g_settings.oil_warmup_countdown_sec));
+    g_settings.oil_warmup_water_temp = clampWarmupWaterTemp(static_cast<float>(load_u8(kKeyOilWarmupWTemp, static_cast<uint8_t>(g_settings.oil_warmup_water_temp))));
+    g_settings.oil_warmup_countdown_sec = clampWarmupCountdown(load_u32(kKeyOilWarmupTime, g_settings.oil_warmup_countdown_sec));
+    // una sola volta: chi aveva ancora i vecchi valori predefiniti (80 C / 5 min)
+    // passa ai nuovi (75 C / 3 min); un valore scelto diverso resta com'e'
+    if (load_u8(kKeyOilWarmupV2, 0) == 0) {
+        if (g_settings.oil_warmup_countdown_sec == 300) {
+            g_settings.oil_warmup_countdown_sec = 180;
+            save_u32(kKeyOilWarmupTime, 180);
+        }
+        if (g_settings.oil_warmup_water_temp == 80.0f) {
+            g_settings.oil_warmup_water_temp = 75.0f;
+            save_u8(kKeyOilWarmupWTemp, 75);
+        }
+        save_u8(kKeyOilWarmupV2, 1);
+    }
     g_settings.oil_cold_rpm_limit = static_cast<float>(load_u32(kKeyOilColdRpm, static_cast<uint32_t>(g_settings.oil_cold_rpm_limit)));
     g_settings.oil_virtual_temp_display = load_u8(kKeyOilVirtDisplay, g_settings.oil_virtual_temp_display ? 1 : 0) != 0;
     g_settings.custom_tab_enabled = load_u8(kKeyCustTabEn, g_settings.custom_tab_enabled ? 1 : 0) != 0;
@@ -364,11 +390,13 @@ void setOilWarmupEnabled(bool enable) {
 }
 
 void setOilWarmupWaterTemp(float temp_c) {
+    temp_c = clampWarmupWaterTemp(temp_c);
     g_settings.oil_warmup_water_temp = temp_c;
     save_u8(kKeyOilWarmupWTemp, static_cast<uint8_t>(temp_c));
 }
 
 void setOilWarmupCountdownSec(uint16_t sec) {
+    sec = clampWarmupCountdown(sec);
     g_settings.oil_warmup_countdown_sec = sec;
     save_u32(kKeyOilWarmupTime, sec);
 }
