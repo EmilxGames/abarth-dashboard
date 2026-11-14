@@ -42,6 +42,8 @@ bool WifiManager::init() {
     esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &WifiManager::eventHandler, this, nullptr);
 
     esp_wifi_set_mode(WIFI_MODE_STA);
+    // Italia: canali 1-13 (con il paese "mondo" i canali 12-13 restano esclusi)
+    esp_wifi_set_country_code("IT", true);
     err = esp_wifi_start();
     if (err != ESP_OK) {
         last_error_ = std::string("avvio Wi-Fi non riuscito (") + esp_err_to_name(err) + ")";
@@ -113,7 +115,12 @@ void WifiManager::connect(const std::string& ssid, const std::string& password, 
             std::strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), self->pending_ssid_.c_str(), sizeof(wifi_config.sta.ssid) - 1);
             std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password), self->pending_pass_.c_str(), sizeof(wifi_config.sta.password) - 1);
             // reti aperte (molti dongle) oppure WPA2 o superiore
-            wifi_config.sta.threshold.authmode = self->pending_pass_.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+            wifi_config.sta.threshold.authmode = self->pending_pass_.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA_PSK;
+            // cerca su tutti i canali e prende il punto di accesso con il segnale migliore
+            wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+            wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+            wifi_config.sta.pmf_cfg.capable = true;
+            wifi_config.sta.pmf_cfg.required = false;
             esp_wifi_disconnect();
             esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
             ESP_LOGI(TAG, "Tentativo connessione a SSID: %s", self->pending_ssid_.c_str());
@@ -171,6 +178,8 @@ void WifiManager::eventHandler(void* arg, esp_event_base_t event_base, int32_t e
                     net.ssid = reinterpret_cast<char*>(ap_info[i].ssid);
                     net.rssi = ap_info[i].rssi;
                     net.auth_mode = ap_info[i].authmode;
+                    ESP_LOGI(TAG, "rete %s: canale %u, sicurezza %d, %d dBm", net.ssid.c_str(), ap_info[i].primary,
+                             (int)ap_info[i].authmode, ap_info[i].rssi);
                     
                     // Deduplicate
                     auto it = std::find_if(networks.begin(), networks.end(), [&](const WifiNetwork& n) {

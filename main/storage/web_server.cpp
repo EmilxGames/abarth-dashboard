@@ -8,7 +8,11 @@
 #include <esp_log.h>
 #include <esp_http_server.h>
 #include <esp_system.h>
+#include <atomic>
 #include <esp_timer.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include <esp_random.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -25,6 +29,8 @@ constexpr const char* TAG = "web_server";
 httpd_handle_t s_server = nullptr;
 esp_timer_handle_t s_auto_stop_timer = nullptr;
 constexpr uint64_t kAutoStopUs = 10ULL * 60ULL * 1000000ULL;  // 10 minuti
+uint64_t s_auto_stop_us = kAutoStopUs;
+bool s_debug_no_wifi = false;
 constexpr const char* kLogDir = "/sdcard/logs";
 // Token anti-CSRF generato a ogni avvio del server: le richieste che modificano
 // qualcosa (cancellazione, OTA) devono riportarlo.
@@ -34,11 +40,61 @@ bool token_ok(const char* t) {
     return t && s_token[0] != '\0' && std::strcmp(t, s_token) == 0;
 }
 
+// "Arresto" senza fermare il task del server. In ESP-IDF 5.4 il task di
+// httpd si cancella da solo con vTaskDeleteWithCaps e la memoria della sua
+// libreria C viene liberata due volte (assert "block already marked as free"
+// in tlsf_free, da prvTaskDeleteWithCaps -> _reclaim_reent): era il riavvio
+// del display premendo "arresta". Quindi httpd_stop non si chiama mai: il
+// server, una volta creato, resta in vita ma "spento" rifiuta ogni richiesta,
+// chiude i collegamenti aperti e azzera il token. Riaccenderlo e' immediato.
+// Spegnere e' solo un'operazione su un flag: sicuro da qualsiasi task
+// (interfaccia, timer, eventi Wi-Fi), anche piu' volte di seguito.
+std::atomic<bool> s_enabled{false};
+SemaphoreHandle_t s_mx = nullptr;   ///< protegge la creazione di s_server
+
+void ensure_sync() {
+    static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+    portENTER_CRITICAL(&mux);
+    const bool need = !s_mx;
+    portEXIT_CRITICAL(&mux);
+    if (!need) return;
+    SemaphoreHandle_t m = xSemaphoreCreateMutex();
+    portENTER_CRITICAL(&mux);
+    if (!s_mx) { s_mx = m; m = nullptr; }
+    portEXIT_CRITICAL(&mux);
+    if (m) vSemaphoreDelete(m);
+}
+
+/// Da chiamare all'inizio di ogni gestore: false = server spento (risposta gia' inviata)
+bool server_enabled(httpd_req_t* req) {
+    if (s_enabled.load()) return true;
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_hdr(req, "Connection", "close");
+    httpd_resp_sendstr(req, "Web server spento dal display.");
+    return false;
+}
+
+void auto_stop_cb(void*);
+
+void enable_server() {
+    snprintf(s_token, sizeof(s_token), "%08lx%08lx", (unsigned long)esp_random(), (unsigned long)esp_random());
+    if (!s_auto_stop_timer) {
+        esp_timer_create_args_t targs = {};
+        targs.callback = &auto_stop_cb;
+        targs.name = "web_autostop";
+        esp_timer_create(&targs, &s_auto_stop_timer);
+    }
+    if (s_auto_stop_timer) {
+        esp_timer_stop(s_auto_stop_timer);
+        esp_timer_start_once(s_auto_stop_timer, s_auto_stop_us);
+    }
+    s_enabled.store(true);
+    ESP_LOGI(TAG, "Web Server Abarth acceso su porta 80 (arresto automatico tra %llu s)", (unsigned long long)(s_auto_stop_us / 1000000ULL));
+}
+
 void auto_stop_cb(void*) {
     ESP_LOGI(TAG, "Timeout 10 minuti: arresto automatico Web Server");
-    // httpd_stop non va chiamato dal task del timer se il server sta servendo
-    // una richiesta lunga: lo facciamo da un task dedicato.
-    xTaskCreate([](void*) { stopServer(); vTaskDelete(nullptr); }, "web_stop", 3072, nullptr, 3, nullptr);
+    stopServer();   // solo un flag: sicuro anche dal task del timer
 }
 
 // Helper per estrarre parametro da query string
@@ -59,6 +115,7 @@ bool get_query_param(const char* query, const char* key, char* out_val, size_t m
 
 // Handler GET / (Dashboard Web, Telemetria & OTA)
 esp_err_t index_get_handler(httpd_req_t *req) {
+    if (!server_enabled(req)) return ESP_OK;
     httpd_resp_set_type(req, "text/html; charset=utf-8");
 
     // Header pagina con stile Abarth Dark
@@ -226,6 +283,7 @@ esp_err_t index_get_handler(httpd_req_t *req) {
 
 // Handler GET /telemetry/download?file=...
 esp_err_t download_handler(httpd_req_t *req) {
+    if (!server_enabled(req)) return ESP_OK;
     char query[256] = {};
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Parametro mancante");
@@ -273,6 +331,7 @@ esp_err_t download_handler(httpd_req_t *req) {
 
 // Handler POST /telemetry/delete (body: file=...&token=...)
 esp_err_t delete_handler(httpd_req_t *req) {
+    if (!server_enabled(req)) return ESP_OK;
     char body[256] = {};
     if (req->content_len == 0 || req->content_len >= sizeof(body)) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Richiesta non valida");
@@ -314,6 +373,7 @@ esp_err_t delete_handler(httpd_req_t *req) {
 
 // Handler POST /update (Web OTA)
 esp_err_t update_post_handler(httpd_req_t *req) {
+    if (!server_enabled(req)) return ESP_OK;
     char token[24] = {};
     if (httpd_req_get_hdr_value_str(req, "X-Token", token, sizeof(token)) != ESP_OK || !token_ok(token)) {
         httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Token non valido: ricarica la pagina");
@@ -381,15 +441,21 @@ esp_err_t update_post_handler(httpd_req_t *req) {
 }  // namespace
 
 esp_err_t startServer() {
-    if (s_server != nullptr) {
-        return ESP_OK;
-    }
+    ensure_sync();
+    if (s_enabled.load()) return ESP_OK;
     // Senza rete lo stack TCP/IP puo' non essere inizializzato: httpd_start
     // andrebbe in assert (Invalid mbox) e riavvierebbe il display.
-    if (!wifi::WifiManager::instance().isConnected()) {
+    if (!wifi::WifiManager::instance().isConnected() && !s_debug_no_wifi) {
         ESP_LOGW(TAG, "Web Server non avviato: WiFi non connesso");
         return ESP_ERR_INVALID_STATE;
     }
+    xSemaphoreTake(s_mx, portMAX_DELAY);
+    if (s_server) {   // gia' creato: basta riaccenderlo
+        xSemaphoreGive(s_mx);
+        enable_server();
+        return ESP_OK;
+    }
+    xSemaphoreGive(s_mx);
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
@@ -398,25 +464,13 @@ esp_err_t startServer() {
     config.stack_size = 8192;
     config.lru_purge_enable = true;
 
-    esp_err_t ret = httpd_start(&s_server, &config);
+    httpd_handle_t server = nullptr;
+    esp_err_t ret = httpd_start(&server, &config);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Errore avvio HTTP server: %s", esp_err_to_name(ret));
-        s_server = nullptr;
         return ret;
     }
 
-    snprintf(s_token, sizeof(s_token), "%08lx%08lx", (unsigned long)esp_random(), (unsigned long)esp_random());
-
-    if (!s_auto_stop_timer) {
-        esp_timer_create_args_t targs = {};
-        targs.callback = &auto_stop_cb;
-        targs.name = "web_autostop";
-        esp_timer_create(&targs, &s_auto_stop_timer);
-    }
-    if (s_auto_stop_timer) {
-        esp_timer_stop(s_auto_stop_timer);
-        esp_timer_start_once(s_auto_stop_timer, kAutoStopUs);
-    }
 
     // Registrazione rotte
     httpd_uri_t uri_index = {
@@ -425,7 +479,7 @@ esp_err_t startServer() {
         .handler   = index_get_handler,
         .user_ctx  = nullptr
     };
-    httpd_register_uri_handler(s_server, &uri_index);
+    httpd_register_uri_handler(server, &uri_index);
 
     httpd_uri_t uri_download = {
         .uri       = "/telemetry/download",
@@ -433,7 +487,7 @@ esp_err_t startServer() {
         .handler   = download_handler,
         .user_ctx  = nullptr
     };
-    httpd_register_uri_handler(s_server, &uri_download);
+    httpd_register_uri_handler(server, &uri_download);
 
     httpd_uri_t uri_delete = {
         .uri       = "/telemetry/delete",
@@ -441,7 +495,7 @@ esp_err_t startServer() {
         .handler   = delete_handler,
         .user_ctx  = nullptr
     };
-    httpd_register_uri_handler(s_server, &uri_delete);
+    httpd_register_uri_handler(server, &uri_delete);
 
     httpd_uri_t uri_update = {
         .uri       = "/update",
@@ -449,24 +503,48 @@ esp_err_t startServer() {
         .handler   = update_post_handler,
         .user_ctx  = nullptr
     };
-    httpd_register_uri_handler(s_server, &uri_update);
+    httpd_register_uri_handler(server, &uri_update);
 
-    ESP_LOGI(TAG, "Web Server Abarth avviato su porta 80 (arresto automatico tra 10 minuti)");
+    // pubblicato solo a rotte registrate
+    xSemaphoreTake(s_mx, portMAX_DELAY);
+    s_server = server;
+    xSemaphoreGive(s_mx);
+    enable_server();
     return ESP_OK;
 }
 
 void stopServer() {
+    ensure_sync();
     if (s_auto_stop_timer) esp_timer_stop(s_auto_stop_timer);
+    if (!s_enabled.exchange(false)) return;   // gia' spento: niente da fare
     s_token[0] = '\0';
-    if (s_server) {
-        httpd_stop(s_server);
-        s_server = nullptr;
-        ESP_LOGI(TAG, "Web Server Abarth fermato");
+    // chiude i collegamenti aperti (lo fa il task del server, in sicurezza)
+    xSemaphoreTake(s_mx, portMAX_DELAY);
+    httpd_handle_t h = s_server;
+    xSemaphoreGive(s_mx);
+    if (h) {
+        size_t n = 8;
+        int fds[8];
+        if (httpd_get_client_list(h, &n, fds) == ESP_OK)
+            for (size_t i = 0; i < n; ++i) httpd_sess_trigger_close(h, fds[i]);
     }
+    ESP_LOGI(TAG, "Web Server Abarth spento");
 }
 
+esp_err_t debugStartWithoutWifi() {
+    // solo test: avvia il server anche senza rete (lo stack TCP/IP deve essere
+    // gia' inizializzato, es. dopo una ricerca Wi-Fi), per provare gli arresti
+    // con un client collegato da 127.0.0.1
+    s_debug_no_wifi = true;
+    const esp_err_t e = startServer();
+    s_debug_no_wifi = false;
+    return e;
+}
+
+void debugSetAutoStopMs(uint32_t ms) { s_auto_stop_us = ms ? ms * 1000ULL : kAutoStopUs; }
+
 bool isRunning() {
-    return s_server != nullptr;
+    return s_enabled.load();
 }
 
 std::string getServerUrl() {

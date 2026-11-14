@@ -16,6 +16,8 @@
 #include "config/warmup_manager.h"
 #include "display/lvgl_v8_port.h"
 #include "ui_v2/ui_v2.h"
+#include "storage/web_server.h"
+#include "lwip/sockets.h"
 #include "wifi_manager.h"
 #include "ui_v2/page_personale.h"
 #include "ui_v2/settings_pages.h"
@@ -318,6 +320,85 @@ void sim_swipe_test() {
     settings::setDebugMode(dbg0);
 }
 
+void slow_client(void*) {
+    // client lento da 127.0.0.1: chiede "/" e legge piano, cosi' resta
+    // collegato (con il gestore della pagina a meta') mentre si arresta il server
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in a = {};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(80);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int got = 0;
+    char first[16] = "";
+    if (s >= 0 && connect(s, reinterpret_cast<sockaddr*>(&a), sizeof(a)) == 0) {
+        const char* req = "GET / HTTP/1.1\r\nHost: display\r\n\r\n";
+        send(s, req, strlen(req), 0);
+        char b[64];
+        timeval tv = {0, 300000};
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        for (int k = 0; k < 30; ++k) {
+            const int n = recv(s, b, sizeof(b), 0);
+            if (n == 0) break;
+            if (n > 0) { if (got == 0) std::snprintf(first, sizeof(first), "%.12s", b); got += n; }
+            vTaskDelay(pdMS_TO_TICKS(200));
+        }
+    }
+    if (s >= 0) close(s);
+    ESP_LOGW("TOUCH_TEST", "  client: ricevuti %d byte, risposta \"%s\"", got, first);
+    vTaskDelete(nullptr);
+}
+
+void web_test() {
+    // Arresto del web server in tutti i modi, senza rete (server raggiunto da
+    // un client sul display stesso): pulsante (task LVGL) con client collegato,
+    // doppio arresto da due task insieme, riavvio subito dopo l'arresto,
+    // arresto automatico
+    auto& wm = wifi::WifiManager::instance();
+    wm.startScan([](const std::vector<wifi::WifiNetwork>&) {});   // inizializza lo stack di rete
+    vTaskDelay(pdMS_TO_TICKS(4000));
+    auto ui = [](auto fn) { if (lvgl_port_lock(-1)) { fn(); lvgl_port_unlock(); } };
+    bool ok = true;
+    for (int round = 0; round < 3; ++round) {
+        esp_err_t e = ESP_FAIL;
+        ui([&]() { e = web::debugStartWithoutWifi(); });
+        xTaskCreate(slow_client, "slowcli", 4096, nullptr, 4, nullptr);
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        const int64_t t0 = esp_timer_get_time();
+        ui([]() { web::stopServer(); });   // come il pulsante "Avvia / arresta"
+        const long ms = (long)((esp_timer_get_time() - t0) / 1000);
+        ok &= e == ESP_OK && !web::isRunning() && ms < 200;
+        ESP_LOGW("TOUCH_TEST", "web giro %d: avvio=%s, arresto dal pulsante in %ld ms, attivo dopo=%d", round,
+                 esp_err_to_name(e), ms, web::isRunning());
+        vTaskDelay(pdMS_TO_TICKS(3000));
+    }
+    // doppio arresto contemporaneo (es. pulsante + rete caduta)
+    ui([]() { web::debugStartWithoutWifi(); });
+    for (int k = 0; k < 2; ++k)
+        xTaskCreate([](void*) { web::stopServer(); vTaskDelete(nullptr); }, "stop2", 3072, nullptr, 5, nullptr);
+    ui([]() { web::stopServer(); });
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    // riavvio subito dopo un arresto
+    ui([]() { web::debugStartWithoutWifi(); });
+    ui([]() { web::stopServer(); });
+    esp_err_t e2 = ESP_FAIL;
+    ui([&]() { e2 = web::debugStartWithoutWifi(); });
+    ok &= e2 == ESP_OK && web::isRunning();
+    ESP_LOGW("TOUCH_TEST", "web: doppio arresto ok, riavvio subito dopo=%s attivo=%d", esp_err_to_name(e2), web::isRunning());
+    ui([]() { web::stopServer(); });
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    // arresto automatico (accorciato a 3 s)
+    web::debugSetAutoStopMs(3000);
+    ui([]() { web::debugStartWithoutWifi(); });
+    xTaskCreate(slow_client, "slowcli", 4096, nullptr, 4, nullptr);
+    vTaskDelay(pdMS_TO_TICKS(7000));
+    ok &= !web::isRunning();
+    ESP_LOGW("TOUCH_TEST", "web: arresto automatico -> attivo=%d", web::isRunning());
+    xTaskCreate(slow_client, "slowcli", 4096, nullptr, 4, nullptr);   // a server spento: risposta 503
+    vTaskDelay(pdMS_TO_TICKS(2500));
+    web::debugSetAutoStopMs(0);
+    ESP_LOGW("TOUCH_TEST", "web server: %s", ok ? "OK" : "ERRORE");
+}
+
 void keyboard_test() {
     // Pagina di inserimento password: modi della tastiera, occhio, conferma
     static int submitted = 0;
@@ -471,6 +552,7 @@ void task(void*) {
     // i test usano l'ordine pagine predefinito (quello dell'utente si ripristina dopo)
     const page_order::Order user_order = pageOrder();
     if (lvgl_port_lock(-1)) { setPageOrder(page_order::defaults()); lvgl_port_unlock(); }
+    web_test();
     keyboard_test();
     wifi_test();
     sim_swipe_test();

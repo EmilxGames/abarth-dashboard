@@ -27,12 +27,15 @@ void autoConnectInternetWifi() {
     // in un task a parte, qualche secondo dopo l'avvio (UI e OBD gia' partiti)
     xTaskCreate([](void*) {
         vTaskDelay(pdMS_TO_TICKS(12000));
-        links::WifiEntry e;
         auto& wm = wifi::WifiManager::instance();
-        if (settings::current().connection_mode != settings::ConnectionMode::WifiObd && !wm.isConnected() &&
-            links::lastWifi(links::WifiRole::Internet, e)) {
-            ESP_LOGI("connection", "collegamento automatico alla rete salvata %s", e.ssid.c_str());
+        // qualche tentativo: subito dopo l'avvio la rete a volte non risulta ancora visibile
+        for (int attempt = 0; attempt < 4 && !wm.isConnected(); ++attempt) {
+            links::WifiEntry e;
+            if (settings::current().connection_mode == settings::ConnectionMode::WifiObd ||
+                !links::lastWifi(links::WifiRole::Internet, e)) break;
+            ESP_LOGI("connection", "collegamento automatico alla rete salvata %s (tentativo %d)", e.ssid.c_str(), attempt + 1);
             wm.connect(e.ssid, e.pass, nullptr);   // se non c'e' o fallisce: nessun problema
+            for (int k = 0; k < 150 && !wm.isConnected(); ++k) vTaskDelay(pdMS_TO_TICKS(100));
         }
         vTaskDelete(nullptr);
     }, "wifi_auto", 4096, nullptr, 2, nullptr);
