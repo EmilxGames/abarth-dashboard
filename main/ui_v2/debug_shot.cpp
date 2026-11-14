@@ -731,8 +731,32 @@ bool notify_test() {
     return true;
 }
 
+void home_test() {
+    // Home in basso a sinistra: da una sottopagina delle Impostazioni e dal
+    // centro notifiche torna alla prima pagina dell'ordine; poi lo swipe va
+    auto ui = [](auto fn) { if (lvgl_port_lock(-1)) { fn(); lvgl_port_unlock(); } };
+    const Page first = static_cast<Page>(pageOrder().order[0]);
+    const int32_t hx = 12 + 36, hy = 1000;   // centro del tasto Home
+    ui([]() { showPage(Page::Setup); settings_pages::debugOpen(3); });
+    vTaskDelay(pdMS_TO_TICKS(500));
+    tap(hx, hy);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    const bool a = debugCurrentPage() == first && settings_pages::debugDepth() == 0;
+    ui([]() { showPage(Page::Pressioni); notify_page::open(); });
+    vTaskDelay(pdMS_TO_TICKS(500));
+    tap(hx, hy);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    const bool b = debugCurrentPage() == first && !notify_page::isOpen();
+    dump(180);
+    hswipe(520, 80, 500);
+    const bool c = debugCurrentPage() != first;   // lo swipe passa alla pagina successiva
+    ESP_LOGW("TOUCH_TEST", "Home: da Impostazioni=%d, da notifiche=%d, swipe dopo=%d %s", a, b, c, (a && b && c) ? "OK" : "ERRORE");
+    ui([first]() { showPage(first); });
+}
+
 void task(void*) {
     vTaskDelay(pdMS_TO_TICKS(15000));
+    home_test();
     if (!notify_test()) vTaskDelete(nullptr);   // secondo avvio: verifica e pulizia della cronologia di prova
     alerts_brightness_test();
 

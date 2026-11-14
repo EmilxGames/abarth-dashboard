@@ -75,6 +75,7 @@ lv_timer_t* g_title_timer = nullptr;
 const char* const kPageNames[] = {"GUIDA", "TEMPERATURE", "PRESSIONI", "ELETTRICO", "PERSONALE", "IMPOSTAZIONI"};
 constexpr int32_t kGearW = 72;   ///< pulsante rapido Impostazioni in basso a destra
 lv_obj_t* g_hint = nullptr;      ///< suggerimento dell'editor PERSONALE al posto dei pallini
+lv_obj_t* g_home = nullptr;      ///< tasto Home in basso a sinistra (torna alla prima pagina)
 constexpr int32_t kGearH = 48;   ///< + 8 px di area extra per lato = tocco 88x64
 Page g_before_setup = Page::Guida;
 
@@ -349,6 +350,12 @@ void setBottomHint(const char* txt) {
         if (on || i >= g_seq_n) lv_obj_add_flag(g_dots[i], LV_OBJ_FLAG_HIDDEN);
         else lv_obj_remove_flag(g_dots[i], LV_OBJ_FLAG_HIDDEN);
     }
+    // nell'editor in basso c'e' il suggerimento: Home e campanella si nascondono
+    if (g_home) {
+        if (on) lv_obj_add_flag(g_home, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_remove_flag(g_home, LV_OBJ_FLAG_HIDDEN);
+    }
+    notify_page::setBellVisible(!on);
     if (on) {
         lv_label_set_text(g_hint, txt);
         lv_obj_remove_flag(g_hint, LV_OBJ_FLAG_HIDDEN);
@@ -433,8 +440,8 @@ void build() {
     // sull'ingranaggio apre soltanto le Impostazioni
     // a destra: matita di PERSONALE e ingranaggio (la fascia si ferma prima)
     const int32_t pencil_x = W - 12 - kGearW - 8 - kGearW;
-    // a sinistra la campanella delle notifiche (come l'ingranaggio a destra)
-    const int32_t bell_x = 12, tap_x = bell_x + kGearW + 8;
+    // a sinistra Home e campanella delle notifiche (come matita e ingranaggio a destra)
+    const int32_t home_x = 12, bell_x = home_x + kGearW + 8, tap_x = bell_x + kGearW + 8;
     lv_obj_t* tap = w::box(g_scr, tap_x, kPageBottom, pencil_x - 16 - tap_x, H - kPageBottom, kBg);
     lv_obj_set_style_bg_opa(tap, LV_OPA_TRANSP, 0);   // si vede lo sfondo
     lv_obj_add_flag(tap, LV_OBJ_FLAG_CLICKABLE);
@@ -457,7 +464,22 @@ void build() {
     // Matita di PERSONALE subito a sinistra dell'ingranaggio, stessa forma
     personale::buildPencil(g_scr, pencil_x, kDotsY - kGearH / 2, kGearW, kGearH);
     g_hint = w::label(g_scr, "", fontLabel(), kSecondary);
-    lv_obj_set_pos(g_hint, tap_x + 4, kDotsY - lv_font_get_line_height(fontLabel()) / 2);
+    lv_obj_set_pos(g_hint, kMargin, kDotsY - lv_font_get_line_height(fontLabel()) / 2);
+    g_home = w::box(g_scr, home_x, kDotsY - kGearH / 2, kGearW, kGearH, kBg, 16);
+    lv_obj_set_style_bg_opa(g_home, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(g_home, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(g_home, c(kCardPress), LV_STATE_PRESSED);
+    lv_obj_add_flag(g_home, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(g_home, 8);
+    lv_obj_remove_flag(g_home, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_t* hl = w::label(g_home, LV_SYMBOL_HOME, &lv_font_montserrat_28, kSecondary);
+    lv_obj_center(hl);
+    lv_obj_add_event_cb(g_home, [](lv_event_t*) {
+        // Home: subito la prima pagina dell'ordine scelto (chiude impostazioni e notifiche)
+        if (personale::editing()) return;
+        settings_pages::closeSubPages();
+        showPage(g_seq[0]);
+    }, LV_EVENT_CLICKED, nullptr);
     notify_page::buildBell(g_scr, bell_x, kDotsY - kGearH / 2, kGearW, kGearH, kPageTop, kPageBottom);
     lv_obj_add_flag(g_hint, LV_OBJ_FLAG_HIDDEN);
 

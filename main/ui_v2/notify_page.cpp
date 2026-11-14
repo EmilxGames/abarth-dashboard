@@ -248,4 +248,10 @@ void close() {
 
 bool isOpen() { return g_panel != nullptr; }
 
+void setBellVisible(bool on) {
+    if (!g_bell) return;
+    if (on) lv_obj_remove_flag(g_bell, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(g_bell, LV_OBJ_FLAG_HIDDEN);
+}
+
 }  // namespace abarth::ui_v2::notify_page
