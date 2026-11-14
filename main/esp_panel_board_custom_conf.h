@@ -222,7 +222,11 @@
 #define ESP_PANEL_BOARD_BACKLIGHT_PWM_FREQ_HZ           (20 * 1000)
 #define ESP_PANEL_BOARD_BACKLIGHT_PWM_DUTY_RESOLUTION   (10)
 
-#define ESP_PANEL_BOARD_BACKLIGHT_IDLE_OFF      (0)
+// Retroilluminazione SPENTA all'avvio della board: si accende solo quando il
+// primo fotogramma (splash) e' gia' sul pannello. Accesa subito al 100%
+// mostrava per un attimo il contenuto non ancora pronto del pannello
+// (lampi blu all'accensione).
+#define ESP_PANEL_BOARD_BACKLIGHT_IDLE_OFF      (1)
 #endif // ESP_PANEL_BOARD_USE_BACKLIGHT
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

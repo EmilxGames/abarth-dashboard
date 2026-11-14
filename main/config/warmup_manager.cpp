@@ -153,11 +153,20 @@ void WarmupManager::update() {
         }
     }
 
-    // Se abilitata la stima virtuale in telemetria e il sensore fisico non fornisce dato
+    // Stima virtuale della temperatura olio (se abilitata), solo quando c'e'
+    // una lettura vera e recente dell'acqua da cui stimarla. Prima si
+    // pubblicava 20 C appena acceso anche senza nessun dato (si vedeva "olio
+    // 20 C" per qualche secondo, poi "-"). Non sovrascrive un sensore olio vero:
+    // se il valore e' stato scritto da altri (OBD/CAN), si lascia quello.
     if (s.oil_virtual_temp_display) {
+        const int64_t now_ms2 = esp_timer_get_time() / 1000;
         const auto s_oil = ds.get(data::Metric::OilTempC);
-        if (!s_oil.valid() || s.demo_mode) {
+        const bool real_oil = s_oil.valid() && s_oil.updated_ms != m_virtual_oil_ms &&
+                              (now_ms2 - s_oil.updated_ms) < 10000;
+        const bool coolant_fresh = s_coolant.valid() && (now_ms2 - s_coolant.updated_ms) < 8000;
+        if (!real_oil && (coolant_fresh || s.demo_mode)) {
             ds.set(data::Metric::OilTempC, m_estimated_oil_temp);
+            m_virtual_oil_ms = ds.get(data::Metric::OilTempC).updated_ms;
         }
     }
 }

@@ -144,13 +144,11 @@ extern "C" void app_main(void) {
     abarth::notify::init();   // cronologia avvisi (microSD, altrimenti NVS)
     abarth::storage::telemetry::start();
 
-    DIAG("step: setBrightness %d",
-         static_cast<int>(abarth::settings::current().brightness));
-    abarth::display::setBrightness(
-        static_cast<int>(abarth::settings::current().brightness));
-
     DIAG("step: splash show");
     abarth::ui::splash::show();
+    // retroilluminazione accesa solo con lo splash gia' sul pannello (niente lampi all'avvio)
+    DIAG("step: retroilluminazione %d%%", static_cast<int>(abarth::settings::current().brightness));
+    abarth::display::turnOnAfterFirstFrame(static_cast<int>(abarth::settings::current().brightness));
     if (abarth::storage::sd().isMounted()) {
         char sd_msg[64];
         snprintf(sd_msg, sizeof(sd_msg), "MicroSD OK (%llu MB) - S:/",

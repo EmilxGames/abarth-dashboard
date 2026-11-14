@@ -46,6 +46,7 @@ private:
     uint64_t    m_last_cold_alert_ms = 0;
     bool        m_ready_alert_shown = false;
     float       m_water_peak = 0.0f;
+    int64_t     m_virtual_oil_ms = -1;   ///< timestamp dell'ultima stima olio pubblicata (per riconoscere un sensore vero)
 };
 
 inline WarmupManager& warmup_mgr() { return WarmupManager::instance(); }

@@ -19,6 +19,8 @@ bool init();
 
 /// Regola la luminosita' (0..100).
 void setBrightness(int percent);
+/// Accende la retroilluminazione solo dopo il primo fotogramma completo
+void turnOnAfterFirstFrame(int percent);
 
 /// Hook da chiamare periodicamente (utile solo se il port non usa task
 /// dedicato). Nella config attuale non serve ma viene esposto comunque.

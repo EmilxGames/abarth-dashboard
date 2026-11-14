@@ -6,6 +6,8 @@
 #include <esp_display_panel.hpp>
 #include <esp_log.h>
 #include <lvgl.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "display/lvgl_v8_port.h"
 
@@ -54,9 +56,19 @@ bool init() {
         ESP_LOGE(TAG, "lvgl_port_init fallito");
         return false;
     }
-    setBrightness(80);
-    ESP_LOGI(TAG, "display pronto");
+    // la retroilluminazione resta spenta: la accende main dopo il primo
+    // fotogramma dello splash (vedi turnOnAfterFirstFrame)
+    ESP_LOGI(TAG, "display pronto (retroilluminazione ancora spenta)");
     return true;
+}
+
+void turnOnAfterFirstFrame(int percent) {
+    // aspetta che almeno un fotogramma completo sia stato inviato al pannello
+    // (max 1 s), poi accende la retroilluminazione
+    const uint32_t f0 = lvgl_port_get_frame_count();
+    for (int i = 0; i < 100 && lvgl_port_get_frame_count() == f0; ++i) vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(30));   // il fotogramma e' arrivato anche sul pannello
+    setBrightness(percent);
 }
 
 void setBrightness(int percent) {
