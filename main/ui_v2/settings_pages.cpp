@@ -151,7 +151,7 @@ void open_wifi_results(const std::vector<wifi::WifiNetwork>& nets) {
             if (open) { ask_role_then_connect(ssid, ""); return; }
             sp::textInput(("Password " + ssid).c_str(), "", true, [ssid](const string& pw) {
                 async::postToUi([ssid, pw]() { ask_role_then_connect(ssid, pw); });
-            });
+            }, "Collega");
         });
     }
 }
@@ -698,7 +698,7 @@ void page_custom_rule(uint8_t id) {
     sp::rowNav(l, "Nome", [rule]() { auto* x = rule(); return x ? x->name : string(); }, [rule]() {
         auto* x = rule();
         if (!x) return;
-        sp::textInput("Nome allarme", x->name, false, [rule](const string& t) { if (auto* y = rule()) { y->name = t; config::alerts().saveCustomRules(); } });
+        sp::textInput("Nome allarme", x->name, false, [rule](const string& t) { if (auto* y = rule()) { y->name = t; config::alerts().saveCustomRules(); } }, "Salva");
     });
     sp::rowNav(l, "Grandezza", [rule]() { auto* x = rule(); const auto* mi = x ? metricInfo(x->metric) : nullptr; return string(mi ? mi->long_name : "-"); }, [rule]() {
         size_t n = 0;
@@ -726,7 +726,7 @@ void page_custom_rule(uint8_t id) {
     sp::rowNav(l, "Messaggio", [rule]() { auto* x = rule(); return x ? x->custom_text : string(); }, [rule]() {
         auto* x = rule();
         if (!x) return;
-        sp::textInput("Messaggio", x->custom_text, false, [rule](const string& t) { if (auto* y = rule()) { y->custom_text = t; config::alerts().saveCustomRules(); } });
+        sp::textInput("Messaggio", x->custom_text, false, [rule](const string& t) { if (auto* y = rule()) { y->custom_text = t; config::alerts().saveCustomRules(); } }, "Salva");
     });
     sp::rowNav(l, "Chiusura automatica", [rule]() { auto* x = rule(); return string(kAutoClose[auto_close_idx(x ? x->auto_close_sec : 0)]); }, [rule]() {
         sp::choice("Chiusura automatica", {kAutoClose, kAutoClose + 5}, [rule]() { auto* x = rule(); return auto_close_idx(x ? x->auto_close_sec : 0); },

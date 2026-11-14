@@ -16,6 +16,7 @@
 #include "config/warmup_manager.h"
 #include "display/lvgl_v8_port.h"
 #include "ui_v2/ui_v2.h"
+#include "wifi_manager.h"
 #include "ui_v2/page_personale.h"
 #include "ui_v2/settings_pages.h"
 #include "ui_v2/sp_kit.h"
@@ -291,8 +292,13 @@ int fast_round(int steps, int dt) {
     vTaskDelay(pdMS_TO_TICKS(400));
     const int n = static_cast<int>(Page::Count);
     int ok = 0;
-    for (int i = 1; i < n; ++i) { hswipe_fast(450, 150, 500, steps, dt); ok += static_cast<int>(debugCurrentPage()) == i; }
-    for (int i = n - 2; i >= 0; --i) { hswipe_fast(150, 450, 500, steps, dt); ok += static_cast<int>(debugCurrentPage()) == i; }
+    auto check = [&](int want) {
+        const bool good = static_cast<int>(debugCurrentPage()) == want;
+        if (!good) ESP_LOGW("TOUCH_TEST", "  swipe: pagina %d attesa %d (sottopagine %d)", (int)debugCurrentPage(), want, settings_pages::debugDepth());
+        ok += good;
+    };
+    for (int i = 1; i < n; ++i) { hswipe_fast(450, 150, 500, steps, dt); check(i); }
+    for (int i = n - 2; i >= 0; --i) { hswipe_fast(150, 450, 500, steps, dt); check(i); }
     return ok;
 }
 
@@ -310,6 +316,67 @@ void sim_swipe_test() {
     }
     settings::setDemoMode(demo0);
     settings::setDebugMode(dbg0);
+}
+
+void keyboard_test() {
+    // Pagina di inserimento password: modi della tastiera, occhio, conferma
+    static int submitted = 0;
+    static char got[32] = "";
+    auto open = []() {
+        if (lvgl_port_lock(-1)) {
+            showPage(Page::Setup);
+            sp::textInput("Password Prova", "", true, [](const std::string& s) {
+                ++submitted;
+                std::snprintf(got, sizeof(got), "%s", s.c_str());
+            }, "Collega");
+            lvgl_port_unlock();
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    };
+    auto child = [](int i) -> lv_obj_t* {
+        lv_obj_t* l = sp::topList();
+        return l ? lv_obj_get_child(l, i) : nullptr;   // 0 campo, 1 occhio, 2 Annulla, 3 Collega, 4 tastiera
+    };
+    auto center = [](lv_obj_t* o) {
+        lv_area_t a;
+        if (lvgl_port_lock(-1)) { lv_obj_get_coords(o, &a); lvgl_port_unlock(); }
+        tap((a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2);
+        vTaskDelay(pdMS_TO_TICKS(400));
+    };
+    open();
+    if (lvgl_port_lock(-1)) { lv_textarea_add_text(child(0), "prova123"); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    dump(110);                       // password nascosta, minuscole
+    center(child(1));                // occhio: mostra
+    bool shown = false;
+    if (lvgl_port_lock(-1)) { shown = !lv_textarea_get_password_mode(child(0)); lvgl_port_unlock(); }
+    dump(111);
+    const lv_keyboard_mode_t modes[] = {LV_KEYBOARD_MODE_TEXT_UPPER, LV_KEYBOARD_MODE_SPECIAL, LV_KEYBOARD_MODE_NUMBER};
+    for (int i = 0; i < 3; ++i) {
+        if (lvgl_port_lock(-1)) { lv_keyboard_set_mode(child(4), modes[i]); lvgl_port_unlock(); }
+        vTaskDelay(pdMS_TO_TICKS(300));
+        dump(112 + i);
+    }
+    center(child(3));                // "Collega"
+    const bool by_button = submitted == 1 && std::strcmp(got, "prova123") == 0;
+    open();
+    if (lvgl_port_lock(-1)) {
+        lv_textarea_add_text(child(0), "abc");
+        // come il tasto OK di LVGL: avvisa la tastiera e poi il campo (una sola conferma)
+        lv_obj_send_event(child(4), LV_EVENT_READY, nullptr);
+        lv_obj_send_event(child(0), LV_EVENT_READY, nullptr);
+        lvgl_port_unlock();
+    }
+    vTaskDelay(pdMS_TO_TICKS(300));
+    const bool by_ok = submitted == 2 && std::strcmp(got, "abc") == 0;
+    open();
+    // come il tasto Invio di LVGL con campo su una riga: READY al campo
+    if (lvgl_port_lock(-1)) { lv_textarea_add_text(child(0), "xyz"); lv_obj_send_event(child(0), LV_EVENT_READY, nullptr); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(300));
+    const bool by_enter = submitted == 3 && std::strcmp(got, "xyz") == 0;
+    ESP_LOGW("TOUCH_TEST", "tastiera: occhio=%d Collega=%d OK=%d Invio=%d %s", shown, by_button, by_ok, by_enter,
+             (shown && by_button && by_ok && by_enter) ? "OK" : "ERRORE");
+    if (lvgl_port_lock(-1)) { settings_pages::closeSubPages(); showPage(Page::Guida); lvgl_port_unlock(); }
 }
 
 void wifi_test() {
@@ -335,8 +402,11 @@ void wifi_test() {
     if (lvgl_port_lock(-1)) { settings_pages::debugWebStart(); lvgl_port_unlock(); }
     vTaskDelay(pdMS_TO_TICKS(500));
     dump(103);
+    // se il Wi-Fi e' gia' collegato (il co-processore ricorda l'ultima rete) non c'e' nulla da proporre
+    const bool connected = wifi::WifiManager::instance().isConnected();
     const bool offer = sp::dialogOpen();
-    ESP_LOGW("TOUCH_TEST", "web server senza rete: propone di cercare una rete=%d %s", offer, offer ? "OK" : "ERRORE");
+    ESP_LOGW("TOUCH_TEST", "web server: wifi collegato=%d, proposta di cercare una rete=%d %s", connected, offer,
+             (connected || offer) ? "OK" : "ERRORE");
     if (lvgl_port_lock(-1)) { settings_pages::closeSubPages(); showPage(Page::Guida); lvgl_port_unlock(); }
 }
 
@@ -401,6 +471,7 @@ void task(void*) {
     // i test usano l'ordine pagine predefinito (quello dell'utente si ripristina dopo)
     const page_order::Order user_order = pageOrder();
     if (lvgl_port_lock(-1)) { setPageOrder(page_order::defaults()); lvgl_port_unlock(); }
+    keyboard_test();
     wifi_test();
     sim_swipe_test();
     if (lvgl_port_lock(-1)) { setPageOrder(user_order); lvgl_port_unlock(); }

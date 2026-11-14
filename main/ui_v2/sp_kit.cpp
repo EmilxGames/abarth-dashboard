@@ -448,53 +448,149 @@ void message(const char* title, const std::string& text) {
     lv_obj_add_event_cb(ok, [](lv_event_t*) { close_dialog(); }, LV_EVENT_CLICKED, nullptr);
 }
 
+namespace {
+constexpr uint32_t kKey = 0x23262D, kKeyCtrl = 0x2B2E35, kKeyPress = 0x3A3D45;
+
+struct InputCtx {
+    lv_obj_t* ta = nullptr;
+    bool submitted = false;   ///< il tasto OK avvisa sia la tastiera sia il campo: una sola conferma
+    std::function<void(const std::string&)> done;
+};
+
+void input_submit(InputCtx* c) {
+    if (c->submitted) return;
+    c->submitted = true;
+    const std::string txt = lv_textarea_get_text(c->ta);
+    auto cb = c->done;   // la pagina (e c) viene chiusa da pop()
+    pop();
+    if (cb) cb(txt);
+}
+
+/// Tastiera nello stile Moderno: tasti chiari su fondo scuro, tasti speciali
+/// leggermente diversi, OK nel colore accento, riscontro alla pressione
+void style_keyboard(lv_obj_t* kb) {
+    lv_obj_set_style_bg_color(kb, c(kBg), 0);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(kb, 0, 0);
+    lv_obj_set_style_pad_all(kb, 8, 0);
+    lv_obj_set_style_pad_row(kb, 8, 0);
+    lv_obj_set_style_pad_column(kb, 8, 0);
+    const lv_style_selector_t items = LV_PART_ITEMS;
+    lv_obj_set_style_bg_color(kb, c(kKey), items);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, items);
+    lv_obj_set_style_text_color(kb, c(kText), items);
+    lv_obj_set_style_text_font(kb, fontBody(), items);
+    lv_obj_set_style_radius(kb, 10, items);
+    lv_obj_set_style_shadow_width(kb, 0, items);
+    lv_obj_set_style_border_width(kb, 0, items);
+    lv_obj_set_style_outline_width(kb, 0, items);
+    for (lv_state_t st : {static_cast<lv_state_t>(LV_STATE_CHECKED), static_cast<lv_state_t>(LV_STATE_DISABLED)}) {
+        const auto sel = static_cast<lv_style_selector_t>(LV_PART_ITEMS | st);
+        lv_obj_set_style_bg_color(kb, c(kKeyCtrl), sel);
+        lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, sel);
+        lv_obj_set_style_text_color(kb, c(kText), sel);
+    }
+    for (lv_state_t st : {static_cast<lv_state_t>(LV_STATE_PRESSED), static_cast<lv_state_t>(LV_STATE_PRESSED | LV_STATE_CHECKED)}) {
+        const auto sel = static_cast<lv_style_selector_t>(LV_PART_ITEMS | st);
+        lv_obj_set_style_bg_color(kb, c(kKeyPress), sel);
+        lv_obj_set_style_text_color(kb, c(kText), sel);
+    }
+    // OK nel colore accento (si colora solo quel tasto mentre si disegna)
+    lv_obj_add_flag(kb, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+    lv_obj_add_event_cb(kb, [](lv_event_t* e) {
+        lv_draw_task_t* task = lv_event_get_draw_task(e);
+        auto* base = static_cast<lv_draw_dsc_base_t*>(lv_draw_task_get_draw_dsc(task));
+        if (!base || base->part != LV_PART_ITEMS) return;
+        const char* txt = lv_buttonmatrix_get_button_text(lv_event_get_target_obj(e), base->id1);
+        if (!txt || std::strcmp(txt, LV_SYMBOL_OK) != 0) return;
+        if (lv_draw_task_get_type(task) == LV_DRAW_TASK_TYPE_FILL) {
+            static_cast<lv_draw_fill_dsc_t*>(lv_draw_task_get_draw_dsc(task))->color = c(accent());
+        } else if (lv_draw_task_get_type(task) == LV_DRAW_TASK_TYPE_LABEL) {
+            static_cast<lv_draw_label_dsc_t*>(lv_draw_task_get_draw_dsc(task))->color = c(kBg);
+        }
+    }, LV_EVENT_DRAW_TASK_ADDED, nullptr);
+}
+}  // namespace
+
 void textInput(const char* title, const std::string& initial, bool password,
-               std::function<void(const std::string&)> done) {
+               std::function<void(const std::string&)> done, const char* ok_label) {
     lv_obj_t* list = push(title);
-    Page* p = page_of(list);
     lv_obj_remove_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+    auto* ctx = new InputCtx();
+    ctx->done = std::move(done);
+    lv_obj_add_event_cb(list, [](lv_event_t* e) { delete static_cast<InputCtx*>(lv_event_get_user_data(e)); }, LV_EVENT_DELETE, ctx);
+
+    // campo (con occhio per mostrare/nascondere la password)
+    const int32_t eye_w = password ? 72 + 12 : 0;
     lv_obj_t* ta = lv_textarea_create(list);
+    ctx->ta = ta;
     lv_obj_remove_style_all(ta);
     lv_obj_set_pos(ta, kMargin, 8);
-    lv_obj_set_size(ta, cw(), kRowH);
+    lv_obj_set_size(ta, cw() - eye_w, kRowH);
     lv_obj_set_style_bg_color(ta, c(kCard), 0);
     lv_obj_set_style_bg_opa(ta, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(ta, 18, 0);
+    lv_obj_set_style_border_width(ta, 2, LV_STATE_FOCUSED);
+    lv_obj_set_style_border_color(ta, c(accent()), LV_STATE_FOCUSED);
     lv_obj_set_style_pad_hor(ta, kCardPad, 0);
-    lv_obj_set_style_pad_ver(ta, 20, 0);
+    lv_obj_set_style_pad_ver(ta, 22, 0);
     lv_obj_set_style_text_font(ta, fontBody(), 0);
     lv_obj_set_style_text_color(ta, c(kText), 0);
+    lv_obj_set_style_bg_color(ta, c(kText), LV_PART_CURSOR);    // cursore visibile
+    lv_obj_set_style_bg_opa(ta, LV_OPA_COVER, LV_PART_CURSOR);
+    lv_obj_set_style_width(ta, 2, LV_PART_CURSOR);
     lv_textarea_set_one_line(ta, true);
     lv_textarea_set_password_mode(ta, password);
+    lv_textarea_set_password_show_time(ta, 1000);   // l'ultimo carattere resta visibile 1 s
     lv_textarea_set_text(ta, initial.c_str());
+    lv_obj_add_state(ta, LV_STATE_FOCUSED);
+    lv_obj_add_event_cb(ta, [](lv_event_t* e) { input_submit(static_cast<InputCtx*>(lv_event_get_user_data(e))); },
+                        LV_EVENT_READY, ctx);   // Invio della tastiera (campo su una riga)
+    if (password) {
+        lv_obj_t* eye = w::box(list, kMargin + cw() - 72, 8, 72, kRowH, kCard, 18);
+        lv_obj_add_flag(eye, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(eye, c(kCardPress), LV_STATE_PRESSED);
+        lv_obj_t* ic = w::label(eye, LV_SYMBOL_EYE_CLOSE, &lv_font_montserrat_24, kSecondary);
+        lv_obj_center(ic);
+        lv_obj_add_event_cb(eye, [](lv_event_t* e) {
+            auto* cx = static_cast<InputCtx*>(lv_event_get_user_data(e));
+            const bool hide = !lv_textarea_get_password_mode(cx->ta);
+            lv_textarea_set_password_mode(cx->ta, hide);
+            lv_obj_t* icon = lv_obj_get_child(static_cast<lv_obj_t*>(lv_event_get_current_target(e)), 0);
+            lv_label_set_text(icon, hide ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN);
+        }, LV_EVENT_CLICKED, ctx);
+    }
+
+    // Annulla / conferma sotto il campo (la tastiera non li copre)
+    const int32_t by = 8 + kRowH + 14;
+    const int32_t bw = (cw() - kGap) / 2;
+    lv_obj_t* no = w::box(list, kMargin, by, bw, kRowH, kTrack, 18);
+    lv_obj_add_flag(no, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(no, c(kCardPress), LV_STATE_PRESSED);
+    lv_obj_t* nl = w::label(no, LV_SYMBOL_LEFT "  Annulla", fontBody(), kText);
+    lv_obj_center(nl);
+    lv_obj_add_event_cb(no, [](lv_event_t*) { pop(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* ok = w::box(list, kMargin + bw + kGap, by, bw, kRowH, accent(), 18);
+    lv_obj_add_flag(ok, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(ok, c(kCardPress), LV_STATE_PRESSED);
+    lv_obj_t* okl = w::label(ok, ok_label, fontBody(), kBg);
+    lv_obj_center(okl);
+    lv_obj_add_event_cb(ok, [](lv_event_t* e) { input_submit(static_cast<InputCtx*>(lv_event_get_user_data(e))); },
+                        LV_EVENT_CLICKED, ctx);
+
+    // tastiera in basso, grande (~45% dello schermo)
     lv_obj_t* kb = lv_keyboard_create(list);
-    lv_obj_set_pos(kb, 0, kRowH + 28);
-    lv_obj_set_size(kb, g_w, 420);
-    lv_obj_set_style_bg_color(kb, c(kBg), 0);
-    lv_obj_set_style_border_width(kb, 0, 0);
-    lv_obj_set_style_bg_color(kb, c(kCard), LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(kb, c(kTrack), static_cast<lv_style_selector_t>(LV_PART_ITEMS | LV_STATE_CHECKED));
-    lv_obj_set_style_text_color(kb, c(kText), LV_PART_ITEMS);
-    lv_obj_set_style_text_font(kb, fontBody(), LV_PART_ITEMS);
-    lv_obj_set_style_radius(kb, 12, LV_PART_ITEMS);
-    lv_obj_set_style_shadow_width(kb, 0, LV_PART_ITEMS);
-    lv_obj_set_style_border_width(kb, 0, LV_PART_ITEMS);
+    const int32_t kb_h = 460;
+    lv_obj_set_size(kb, g_w, kb_h);
+    // la tastiera di LVGL e' allineata in basso: una posizione sarebbe un
+    // offset dal fondo (e la spingerebbe fuori dallo schermo)
+    // un po' sopra il fondo: l'ingranaggio in basso a destra non copre il tasto OK
+    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -20);
+    style_keyboard(kb);
     lv_keyboard_set_textarea(kb, ta);
-    auto* f = new std::function<void(const std::string&)>(std::move(done));
-    lv_obj_add_event_cb(kb, [](lv_event_t* e) {
-        lv_obj_t* k = static_cast<lv_obj_t*>(lv_event_get_target(e));
-        auto* fn = static_cast<std::function<void(const std::string&)>*>(lv_event_get_user_data(e));
-        const std::string txt = lv_textarea_get_text(lv_keyboard_get_textarea(k));
-        const bool ok = lv_event_get_code(e) == LV_EVENT_READY;
-        auto cb = *fn;
-        pop();
-        if (ok && cb) cb(txt);
-    }, LV_EVENT_READY, f);
-    lv_obj_add_event_cb(kb, [](lv_event_t*) { pop(); }, LV_EVENT_CANCEL, nullptr);
-    lv_obj_add_event_cb(kb, [](lv_event_t* e) {
-        delete static_cast<std::function<void(const std::string&)>*>(lv_event_get_user_data(e));
-    }, LV_EVENT_DELETE, f);
-    (void)p;
+    lv_obj_add_event_cb(kb, [](lv_event_t* e) { input_submit(static_cast<InputCtx*>(lv_event_get_user_data(e))); },
+                        LV_EVENT_READY, ctx);   // tasto OK della tastiera
+    lv_obj_add_event_cb(kb, [](lv_event_t*) { pop(); }, LV_EVENT_CANCEL, nullptr);   // tasto "tastiera giu'"
 }
 
 bool dialogOpen() { return g_dialog != nullptr; }

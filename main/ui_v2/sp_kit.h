@@ -58,9 +58,11 @@ void choice(const char* title, const std::vector<std::string>& options, std::fun
 void confirm(const char* title, const std::string& text, const char* ok_label, Fn on_ok, bool destructive);
 /// Messaggio con un solo pulsante OK
 void message(const char* title, const std::string& text);
-/// Inserimento testo con tastiera
+/// Inserimento testo con tastiera: campo in alto (con occhio per le
+/// password), pulsanti Annulla / ok_label, tastiera in basso; anche il tasto
+/// OK/Invio della tastiera conferma
 void textInput(const char* title, const std::string& initial, bool password,
-               std::function<void(const std::string&)> done);
+               std::function<void(const std::string&)> done, const char* ok_label = "OK");
 
 /// Aggiorna i valori visibili (chiamata dal timer della pagina SETUP)
 void refresh();
