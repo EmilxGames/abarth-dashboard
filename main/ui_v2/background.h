@@ -19,7 +19,10 @@ extern const char* const kNames[Count];
 
 /// Crea l'immagine di sfondo come primo figlio dello schermo e applica lo stile salvato
 void create(lv_obj_t* scr);
-/// Cambia sfondo subito (nel task LVGL)
+/// Cambia sfondo (nel task LVGL): "Nessuno" subito, gli altri appena disegnati
+/// (in un task a parte, mezzo secondo circa)
 void apply(uint8_t style);
+/// Solo test: true quando lo sfondo richiesto e' disegnato e mostrato
+bool debugIdle();
 
 }  // namespace abarth::ui_v2::background

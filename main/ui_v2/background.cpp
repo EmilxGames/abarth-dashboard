@@ -1,5 +1,6 @@
 #include "ui_v2/background.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <esp_heap_caps.h>
@@ -9,7 +10,10 @@
 #include "src/misc/cache/instance/lv_image_cache.h"
 
 #include "config/settings.h"
+#include "ui_v2/async_ui.h"
 #include "ui_v2/theme.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 extern "C" {   // ui_v2/logo_masks.c (generato da tools/logo_masks.swift dalle immagini in custom/assets)
 extern const uint16_t logo_scorpion_w, logo_scorpion_h;
@@ -28,15 +32,26 @@ const char* const kNames[Count] = {"Nessuno", "Carbonio", "Luce soffusa", "Linee
 namespace {
 constexpr const char* TAG = "sfondo";
 lv_obj_t* g_img = nullptr;
-uint16_t* g_buf = nullptr;
+uint16_t* g_buf = nullptr;      ///< immagine mostrata (sfondo)
 lv_image_dsc_t g_dsc;
 // Loghi: le schede sono opache e coprono quasi tutto lo schermo, quindi un
 // logo nello sfondo si vedrebbe solo negli spazi tra le schede. Il logo e'
 // invece una filigrana sopra a tutto (ARGB, solo un velo chiaro di pochi %),
 // che non intercetta i tocchi.
 lv_obj_t* g_ovl = nullptr;
-uint32_t* g_ovl_buf = nullptr;
+uint32_t* g_ovl_buf = nullptr;  ///< filigrana mostrata
 lv_image_dsc_t g_ovl_dsc;
+int g_ovl_w = 0, g_ovl_h = 0;
+
+// Il disegno avviene in un task a parte, a bassa priorita' e con pause:
+// all'avvio disegnarlo dentro la costruzione dell'interfaccia teneva occupato
+// un core per oltre 5 s e il watchdog riavviava il display (schermata blu e
+// ritorno alla Classica). Si disegna in buffer nuovi; a lavoro finito il task
+// LVGL scambia le immagini e libera quelle vecchie.
+std::atomic<uint8_t> s_want{0};      ///< sfondo richiesto
+std::atomic<bool> s_busy{false};      ///< task di disegno in corso
+uint8_t s_shown = 0;                  ///< sfondo mostrato (solo task LVGL)
+std::atomic<uint8_t> s_rendered{0};   ///< ultimo sfondo disegnato (in arrivo o mostrato)
 int32_t g_w = 0, g_h = 0;
 
 // colore di base = sfondo Moderno (#0A0B0E)
@@ -92,21 +107,28 @@ float lines(int x, int y) {
     return l * fade;
 }
 
-/// Filigrana del logo: bianco con trasparenza; riempimento leggero e bordo in
-/// alto a sinistra un po' piu' chiaro (effetto rilievo). l in livelli su 255
-/// sopra alle schede scure (~#14161B): alfa = l / 235
-bool render_overlay(const uint8_t* m, int mw, int mh, float fill, float edge) {
-    if (!g_ovl_buf) g_ovl_buf = static_cast<uint32_t*>(heap_caps_malloc(mw * mh * 4, MALLOC_CAP_SPIRAM));
-    if (!g_ovl_buf) return false;
+struct Logo { const uint8_t* m; int w, h; float fill, edge; };
+
+Logo logo_for(uint8_t style) {
+    if (style == ScorpionOutline) return {logo_outline_map, logo_outline_w, logo_outline_h, 12.0f, 4.0f};
+    if (style == Wordmark) return {logo_word_map, logo_word_w, logo_word_h, 8.5f, 9.0f};
+    return {logo_scorpion_map, logo_scorpion_w, logo_scorpion_h, 8.5f, 9.0f};   // riempimento ~4%, bordo ~7%
+}
+
+/// Filigrana del logo (ARGB8888, bianco con trasparenza): riempimento leggero
+/// e bordo in alto a sinistra un po' piu' chiaro (effetto rilievo)
+uint32_t* render_overlay(const Logo& lg) {
+    auto* buf = static_cast<uint32_t*>(heap_caps_malloc(lg.w * lg.h * 4, MALLOC_CAP_SPIRAM));
+    if (!buf) return nullptr;
     auto at = [&](int x, int y) -> float {
-        if (x < 0 || y < 0 || x >= mw || y >= mh) return 0.0f;
-        return m[y * mw + x] / 255.0f;
+        if (x < 0 || y < 0 || x >= lg.w || y >= lg.h) return 0.0f;
+        return lg.m[y * lg.w + x] / 255.0f;
     };
-    for (int y = 0; y < mh; ++y) {
-        for (int x = 0; x < mw; ++x) {
+    for (int y = 0; y < lg.h; ++y) {
+        for (int x = 0; x < lg.w; ++x) {
             const float a = at(x, y);
             const float rel = at(x - 2, y - 2) - at(x + 2, y + 2);
-            float l = a * fill + (rel > 0 ? rel * edge : rel * edge * 0.35f);
+            float l = a * lg.fill + (rel > 0 ? rel * lg.edge : rel * lg.edge * 0.35f);
             if (l < 0) l = 0;
             // LVGL fonde in RGB565 con 32 livelli di trasparenza e il verde ha
             // gradini piu' fini: un velo bianco troppo leggero alza solo il
@@ -116,66 +138,112 @@ bool render_overlay(const uint8_t* m, int mw, int mh, float fill, float edge) {
             const float steps = l / 8.0f + (kBayer[y & 3][x & 3] + 0.5f) / 16.0f - 0.5f;
             const int st = steps < 0 ? 0 : static_cast<int>(steps);
             const int al = st == 0 ? 0 : st == 1 ? 16 : 24;
-            g_ovl_buf[y * mw + x] = (static_cast<uint32_t>(al) << 24) | 0x00FFFFFFu;   // ARGB8888
+            buf[y * lg.w + x] = (static_cast<uint32_t>(al) << 24) | 0x00FFFFFFu;
         }
+        if ((y & 31) == 31) vTaskDelay(1);   // lascia respirare gli altri task
     }
-    std::memset(&g_ovl_dsc, 0, sizeof(g_ovl_dsc));
-    g_ovl_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-    g_ovl_dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
-    g_ovl_dsc.header.w = mw;
-    g_ovl_dsc.header.h = mh;
-    g_ovl_dsc.header.stride = mw * 4;
-    g_ovl_dsc.data_size = mw * mh * 4;
-    g_ovl_dsc.data = reinterpret_cast<const uint8_t*>(g_ovl_buf);
-    return true;
+    return buf;
 }
 
-void hide_overlay() {
-    if (!g_ovl) return;
-    lv_obj_add_flag(g_ovl, LV_OBJ_FLAG_HIDDEN);
-    if (g_ovl_buf) {
-        lv_image_set_src(g_ovl, nullptr);
-        heap_caps_free(g_ovl_buf);
-        g_ovl_buf = nullptr;
-    }
-}
-
-void show_overlay(uint8_t style) {
-    const uint8_t* m = logo_scorpion_map;
-    int mw = logo_scorpion_w, mh = logo_scorpion_h;
-    float fill = 8.5f, edge = 9.0f;   // riempimento ~4%, bordo illuminato ~7%
-    if (style == ScorpionOutline) { m = logo_outline_map; mw = logo_outline_w; mh = logo_outline_h; fill = 12.0f; edge = 4.0f; }
-    if (style == Wordmark) { m = logo_word_map; mw = logo_word_w; mh = logo_word_h; }
-    hide_overlay();   // dimensioni diverse: buffer nuovo
-    if (!render_overlay(m, mw, mh, fill, edge)) return;
-    lv_image_cache_drop(&g_ovl_dsc);
-    lv_image_set_src(g_ovl, &g_ovl_dsc);
-    lv_obj_set_pos(g_ovl, (g_w - mw) / 2, (g_h - mh) / 2 + 20);
-    lv_obj_move_foreground(g_ovl);
-    lv_obj_remove_flag(g_ovl, LV_OBJ_FLAG_HIDDEN);
-}
-
-void render(uint8_t style) {
-    const int64_t t0 = esp_timer_get_time();
-    // luminosita' per pixel in PSRAM temporanea (float), poi conversione con dithering
-    float* lum = static_cast<float*>(heap_caps_calloc(g_w * g_h, sizeof(float), MALLOC_CAP_SPIRAM));
-    if (!lum) { ESP_LOGE(TAG, "memoria insufficiente"); return; }
+uint16_t* render_bg(uint8_t style) {
+    auto* buf = static_cast<uint16_t*>(heap_caps_malloc(g_w * g_h * 2, MALLOC_CAP_SPIRAM));
+    if (!buf) return nullptr;
     for (int y = 0; y < g_h; ++y) {
         for (int x = 0; x < g_w; ++x) {
-            float l = 0;
+            float l;
             switch (style) {
                 case Carbon: l = carbon(x, y); break;
                 case Vignette: l = vignette(x, y); break;
                 case Lines: l = lines(x, y); break;
                 default: l = vignette(x, y) * 0.6f; break;   // sotto ai loghi una luce leggerissima
             }
-            lum[y * g_w + x] = l;
+            buf[y * g_w + x] = pack(l, x, y);
         }
+        if ((y & 15) == 15) vTaskDelay(1);
     }
-    for (int y = 0; y < g_h; ++y)
-        for (int x = 0; x < g_w; ++x) g_buf[y * g_w + x] = pack(lum[y * g_w + x], x, y);
-    heap_caps_free(lum);
-    ESP_LOGI(TAG, "sfondo \"%s\" disegnato in %lld ms", kNames[style], (long long)((esp_timer_get_time() - t0) / 1000));
+    return buf;
+}
+
+/// Nel task LVGL: mostra le immagini appena disegnate e libera le vecchie
+void install(uint8_t style, uint16_t* bg, uint32_t* ovl, int ow, int oh) {
+    if (!g_img) return;
+    uint16_t* old_bg = g_buf;
+    uint32_t* old_ovl = g_ovl_buf;
+    if (bg) {
+        g_buf = bg;
+        std::memset(&g_dsc, 0, sizeof(g_dsc));
+        g_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+        g_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+        g_dsc.header.w = g_w;
+        g_dsc.header.h = g_h;
+        g_dsc.header.stride = g_w * 2;
+        g_dsc.data_size = g_w * g_h * 2;
+        g_dsc.data = reinterpret_cast<const uint8_t*>(g_buf);
+        lv_image_cache_drop(&g_dsc);
+        lv_image_set_src(g_img, &g_dsc);
+        lv_obj_remove_flag(g_img, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_invalidate(g_img);
+    }
+    if (ovl) {
+        g_ovl_buf = ovl;
+        g_ovl_w = ow;
+        g_ovl_h = oh;
+        std::memset(&g_ovl_dsc, 0, sizeof(g_ovl_dsc));
+        g_ovl_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+        g_ovl_dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
+        g_ovl_dsc.header.w = ow;
+        g_ovl_dsc.header.h = oh;
+        g_ovl_dsc.header.stride = ow * 4;
+        g_ovl_dsc.data_size = ow * oh * 4;
+        g_ovl_dsc.data = reinterpret_cast<const uint8_t*>(g_ovl_buf);
+        lv_image_cache_drop(&g_ovl_dsc);
+        lv_image_set_src(g_ovl, &g_ovl_dsc);
+        lv_obj_set_pos(g_ovl, (g_w - ow) / 2, (g_h - oh) / 2 + 20);
+        lv_obj_move_foreground(g_ovl);
+        lv_obj_remove_flag(g_ovl, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(g_ovl, LV_OBJ_FLAG_HIDDEN);
+        lv_image_set_src(g_ovl, nullptr);
+        g_ovl_buf = nullptr;
+    }
+    if (old_bg && old_bg != g_buf) heap_caps_free(old_bg);
+    if (old_ovl && old_ovl != g_ovl_buf) heap_caps_free(old_ovl);
+    s_shown = style;
+}
+
+void render_task(void*) {
+    for (;;) {
+        const uint8_t st = s_want.load();
+        const int64_t t0 = esp_timer_get_time();
+        uint16_t* bg = render_bg(st);
+        uint32_t* ovl = nullptr;
+        int ow = 0, oh = 0;
+        if (st >= Scorpion && st < Count) {
+            const Logo lg = logo_for(st);
+            ovl = render_overlay(lg);
+            ow = lg.w;
+            oh = lg.h;
+        }
+        ESP_LOGI(TAG, "sfondo \"%s\" disegnato in %lld ms", kNames[st], (long long)((esp_timer_get_time() - t0) / 1000));
+        if (s_want.load() != st || !bg) {   // nel frattempo e' cambiato: si ricomincia
+            heap_caps_free(bg);
+            heap_caps_free(ovl);
+            if (!bg) { ESP_LOGE(TAG, "memoria insufficiente per lo sfondo"); break; }
+            continue;
+        }
+        s_rendered.store(st);
+        async::postToUi([st, bg, ovl, ow, oh]() {
+            if (s_want.load() != st) { heap_caps_free(bg); heap_caps_free(ovl); return; }
+            install(st, bg, ovl, ow, oh);
+        });
+        break;
+    }
+    s_busy.store(false);
+    // una richiesta arrivata proprio ora: si riparte
+    const uint8_t w = s_want.load();
+    if (w != None && w < Count && w != s_rendered.load() && !s_busy.exchange(true))
+        xTaskCreate(render_task, "sfondo", 4096, nullptr, 1, nullptr);
+    vTaskDelete(nullptr);
 }
 }  // namespace
 
@@ -191,39 +259,29 @@ void create(lv_obj_t* scr) {
     lv_obj_remove_flag(g_ovl, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(g_ovl, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(g_ovl, LV_OBJ_FLAG_HIDDEN);
-    apply(settings::current().ui_background);
+    apply(settings::current().ui_background);   // si disegna dopo, senza rallentare l'avvio
 }
 
 void apply(uint8_t style) {
     if (!g_img) return;
-    if (style >= Scorpion && style < Count) show_overlay(style);
-    else hide_overlay();
-    if (style == None || style >= Count) {
+    if (style >= Count) style = None;
+    s_want.store(style);
+    if (style == None) {   // subito: nasconde e libera la PSRAM
         lv_obj_add_flag(g_img, LV_OBJ_FLAG_HIDDEN);
-        if (g_buf) {   // libera la PSRAM
-            lv_image_set_src(g_img, nullptr);
-            heap_caps_free(g_buf);
-            g_buf = nullptr;
-        }
+        lv_obj_add_flag(g_ovl, LV_OBJ_FLAG_HIDDEN);
+        lv_image_set_src(g_img, nullptr);
+        lv_image_set_src(g_ovl, nullptr);
+        heap_caps_free(g_buf);
+        heap_caps_free(g_ovl_buf);
+        g_buf = nullptr;
+        g_ovl_buf = nullptr;
+        s_shown = None;
+        s_rendered.store(None);
         return;
     }
-    if (!g_buf) {
-        g_buf = static_cast<uint16_t*>(heap_caps_malloc(g_w * g_h * 2, MALLOC_CAP_SPIRAM));
-        if (!g_buf) { ESP_LOGE(TAG, "memoria insufficiente per lo sfondo"); return; }
-    }
-    render(style);
-    std::memset(&g_dsc, 0, sizeof(g_dsc));
-    g_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-    g_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-    g_dsc.header.w = g_w;
-    g_dsc.header.h = g_h;
-    g_dsc.header.stride = g_w * 2;
-    g_dsc.data_size = g_w * g_h * 2;
-    g_dsc.data = reinterpret_cast<const uint8_t*>(g_buf);
-    lv_image_cache_drop(&g_dsc);
-    lv_image_set_src(g_img, &g_dsc);
-    lv_obj_remove_flag(g_img, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_invalidate(g_img);
+    if (!s_busy.exchange(true)) xTaskCreate(render_task, "sfondo", 4096, nullptr, 1, nullptr);
 }
+
+bool debugIdle() { return !s_busy.load() && s_shown == s_want.load(); }
 
 }  // namespace abarth::ui_v2::background
