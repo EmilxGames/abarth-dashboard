@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <vector>
 #include <esp_chip_info.h>
+#include <esp_log.h>
 #include <esp_heap_caps.h>
 #include <esp_idf_version.h>
 #include <esp_system.h>
@@ -19,6 +20,7 @@
 #include "can/can_manager.h"
 #include "config/alert_manager.h"
 #include "config/connection.h"
+#include "config/saved_links.h"
 #include "config/settings.h"
 #include "config/warmup_manager.h"
 #include "display/lvgl_v8_port.h"
@@ -61,58 +63,197 @@ const char* mode_name(ConnectionMode m) {
     return m == ConnectionMode::BleObd ? "OBD Bluetooth" : m == ConnectionMode::WifiObd ? "OBD Wi-Fi" : "CAN diretto";
 }
 
-bool already_connected_msg() {
-    // stessa regola della Classica: niente scansioni con un collegamento attivo
-    if (wifi::WifiManager::instance().isConnected() || !current().saved_dongle_mac.empty()) {
-        sp::message("Collegamento attivo", "Disconnetti prima la rete Wi-Fi o dimentica il dispositivo Bluetooth attuale, poi avvia una nuova ricerca.");
-        return true;
-    }
-    return false;
+// Collegamenti salvati come su un telefono (config/saved_links): cercare e'
+// sempre possibile, aggiungere non toglie nulla, cambiare modalita' non
+// cancella niente.
+using links::WifiRole;
+
+void page_collegamento();
+void page_web();
+bool g_web_after_connect = false;   ///< avvia il web server appena la rete e' collegata
+bool g_ble_scanning = false;
+bool g_wifi_scanning = false;
+
+void reopen_collegamento() { sp::popAll(); page_collegamento(); }
+
+void start_web_server() {
+    const esp_err_t err = web::startServer();
+    if (err == ESP_OK) sp::message("Web Server", "Web server attivo.\nApri dal telefono: " + web::getServerUrl());
+    else sp::message("Web Server", fmt("Avvio non riuscito (%s).", esp_err_to_name(err)));
 }
 
-void wifi_connect(const string& ssid, const string& pw) {
+/// Collega la rete; se va a buon fine la salva (o la aggiorna) nell'elenco
+void wifi_connect(const string& ssid, const string& pw, WifiRole role) {
     sp::message("Wi-Fi", "Connessione a " + ssid + " in corso...");
-    wifi::WifiManager::instance().connect(ssid, pw, [ssid, pw](bool ok, const std::string& ip, const std::string& gw) {
-        async::postToUi([ok, ssid, pw, ip, gw]() {
-            if (ok) {
-                setSavedWifi(ssid, pw);
-                obd::obd().connectWiFi(gw, 35000);
-                sp::message("Wi-Fi", "Connesso a " + ssid + "\nIP: " + ip);
-            } else {
-                sp::message("Wi-Fi", "Connessione non riuscita. Controlla la password e riprova.");
+    wifi::WifiManager::instance().connect(ssid, pw, [ssid, pw, role](bool ok, const std::string& ip, const std::string& gw) {
+        async::postToUi([ok, ssid, pw, role, ip, gw]() {
+            if (!ok) {
+                g_web_after_connect = false;
+                const string why = wifi::WifiManager::instance().lastError();
+                sp::message("Wi-Fi", why.empty() ? "Connessione non riuscita. Controlla la password e che la rete sia vicina, poi riprova."
+                                                 : "Wi-Fi non disponibile: " + why);
+                return;
             }
+            if (role == WifiRole::Dongle) {
+                setSavedWifi(ssid, pw);   // rete del dongle in uso (finisce anche nell'elenco)
+                if (current().connection_mode == ConnectionMode::WifiObd) obd::obd().connectWiFi(gw, 35000);
+            } else {
+                links::addWifi(ssid, pw, WifiRole::Internet);
+            }
+            if (g_web_after_connect) {
+                g_web_after_connect = false;
+                start_web_server();
+                return;
+            }
+            sp::message("Wi-Fi", "Collegato a " + ssid + "\nIP: " + ip);
         });
     });
 }
 
+/// Collega una rete scegliendo l'uso: se servirebbe staccare il dongle Wi-Fi in uso, chiede conferma
+void wifi_connect_checked(const string& ssid, const string& pw, WifiRole role) {
+    auto& wm = wifi::WifiManager::instance();
+    const bool dongle_link = current().connection_mode == ConnectionMode::WifiObd && wm.isConnected() &&
+                             wm.getCurrentSSID() == current().saved_wifi_ssid && ssid != wm.getCurrentSSID();
+    if (dongle_link) {
+        sp::confirm("Wi-Fi", "Ora il Wi-Fi e' collegato al dongle OBD: collegandoti a " + ssid +
+                    " i dati OBD si fermano finche' non torni alla rete del dongle.", "Collega",
+                    [ssid, pw, role]() { wifi_connect(ssid, pw, role); }, false);
+        return;
+    }
+    wifi_connect(ssid, pw, role);
+}
+
+/// Dopo la password: a cosa serve la rete (salvata con l'uso scelto)
+void ask_role_then_connect(const string& ssid, const string& pw) {
+    sp::choice("Uso della rete", {"Internet e web server", "Dongle OBD Wi-Fi"}, []() { return -1; },
+               [ssid, pw](int i) {
+                   const WifiRole role = i == 1 ? WifiRole::Dongle : WifiRole::Internet;
+                   async::postToUi([ssid, pw, role]() { wifi_connect_checked(ssid, pw, role); });
+               });
+}
+
 void open_wifi_results(const std::vector<wifi::WifiNetwork>& nets) {
     lv_obj_t* l = sp::push("Reti Wi-Fi");
+    const string err = wifi::WifiManager::instance().lastError();
     sp::section(l, nets.empty() ? "NESSUNA RETE TROVATA" : "RETI TROVATE");
+    if (nets.empty() && !err.empty()) sp::rowInfo(l, [err]() { return "Wi-Fi non disponibile: " + err; });
     for (const auto& n : nets) {
         const string ssid = n.ssid;
         const bool open = n.auth_mode == WIFI_AUTH_OPEN;
-        sp::rowNav(l, ssid.c_str(), [n]() { return fmt("%d dBm%s", n.rssi, n.auth_mode == WIFI_AUTH_OPEN ? "" : " \xC2\xB7 protetta"); },
-                   [ssid, open]() {
-                       if (open) { wifi_connect(ssid, ""); return; }
-                       sp::textInput(("Password " + ssid).c_str(), "", true, [ssid](const string& pw) { wifi_connect(ssid, pw); });
-                   });
+        links::WifiEntry saved;
+        const bool known = links::findWifi(ssid, saved);
+        sp::rowNav(l, ssid.c_str(), [n, known]() {
+            // breve, cosi' anche i nomi di rete lunghi restano leggibili
+            return known ? string("salvata") : fmt("%d dBm%s", n.rssi, n.auth_mode == WIFI_AUTH_OPEN ? " \xC2\xB7 aperta" : "");
+        }, [ssid, open, known, saved]() {
+            if (known) { wifi_connect_checked(ssid, saved.pass, saved.role); return; }   // password gia' salvata
+            if (open) { ask_role_then_connect(ssid, ""); return; }
+            sp::textInput(("Password " + ssid).c_str(), "", true, [ssid](const string& pw) {
+                async::postToUi([ssid, pw]() { ask_role_then_connect(ssid, pw); });
+            });
+        });
     }
+}
+
+void wifi_scan() {
+    // sempre permesso: la ricerca non stacca la rete collegata
+    if (g_wifi_scanning) return;
+    g_wifi_scanning = true;
+    sp::message("Wi-Fi", "Ricerca reti in corso...");
+    wifi::WifiManager::instance().startScan([](const std::vector<wifi::WifiNetwork>& nets) {
+        async::postToUi([nets]() {
+            g_wifi_scanning = false;
+            const bool from_web = g_web_after_connect;
+            sp::popAll();
+            if (from_web) page_web(); else page_collegamento();
+            open_wifi_results(nets);
+        });
+    });
+}
+
+void page_wifi_item(const string& ssid) {
+    links::WifiEntry e;
+    if (!links::findWifi(ssid, e)) return;
+    lv_obj_t* l = sp::push(ssid.c_str());
+    sp::section(l, "RETE SALVATA");
+    sp::rowNav(l, "Uso", [ssid]() { links::WifiEntry x; return string(links::findWifi(ssid, x) ? links::roleName(x.role) : "-"); }, [ssid]() {
+        links::WifiEntry x;
+        if (!links::findWifi(ssid, x)) return;
+        sp::choice("Uso della rete", {"Internet e web server", "Dongle OBD Wi-Fi"},
+                   [ssid]() { links::WifiEntry y; return links::findWifi(ssid, y) ? static_cast<int>(y.role) : 0; },
+                   [ssid](int i) { links::setWifiRole(ssid, i == 1 ? WifiRole::Dongle : WifiRole::Internet); });
+    });
+    sp::rowAction(l, "Collega", [ssid]() {
+        links::WifiEntry x;
+        if (links::findWifi(ssid, x)) wifi_connect_checked(ssid, x.pass, x.role);
+    });
+    sp::rowAction(l, "Rimuovi dall'elenco", [ssid]() {
+        sp::confirm("Rimuovi rete", "Togliere " + ssid + " dalle reti salvate? Per ricollegarla servira' di nuovo la password.", "Rimuovi",
+                    [ssid]() { links::removeWifi(ssid); async::postToUi([]() { reopen_collegamento(); }); }, true);
+    }, true);
 }
 
 void open_ble_results(const std::vector<std::string>& devs) {
     lv_obj_t* l = sp::push("Dispositivi Bluetooth");
     sp::section(l, devs.empty() ? "NESSUN DISPOSITIVO TROVATO" : "DISPOSITIVI TROVATI");
     for (const auto& d : devs) {
-        string mac;
+        string mac, name = d;
         const size_t p1 = d.find('['), p2 = d.find(']');
-        if (p1 != string::npos && p2 != string::npos) mac = d.substr(p1 + 1, p2 - p1 - 1);
-        sp::rowAction(l, d.c_str(), [mac]() {
+        if (p1 != string::npos && p2 != string::npos) {
+            mac = d.substr(p1 + 1, p2 - p1 - 1);
+            name = d.substr(0, p1);
+            while (!name.empty() && name.back() == ' ') name.pop_back();
+        }
+        sp::rowAction(l, d.c_str(), [mac, name]() {
+            if (mac.empty()) return;
+            links::addBle(name, mac);   // si aggiunge, non sostituisce
             setAutoConnect(true);
             obd::obd().connectBLE(mac);
-            sp::pop();
-            sp::message("Bluetooth", "Collegamento a " + mac + " avviato.");
+            sp::popAll();
+            page_collegamento();
+            sp::message("Bluetooth", "Collegamento a " + (name.empty() ? mac : name) + " avviato.");
         });
     }
+}
+
+void ble_scan() {
+    if (g_ble_scanning) return;
+    g_ble_scanning = true;
+    sp::message("Bluetooth", "Ricerca in corso (5 secondi)...");
+    async::runInWorker([]() {
+        obd::BleStream temp;
+        temp.begin({});
+        auto devs = temp.scanDevices(5);
+        async::postToUi([devs]() { g_ble_scanning = false; reopen_collegamento(); open_ble_results(devs); });
+    });
+}
+
+void page_ble_item(const string& mac) {
+    string name;
+    for (const auto& b : links::bleList()) if (b.mac == mac) name = b.name;
+    lv_obj_t* l = sp::push(name.empty() ? mac.c_str() : name.c_str());
+    sp::section(l, "DONGLE SALVATO");
+    sp::rowValue(l, "MAC", [mac]() { return mac; });
+    sp::rowAction(l, "Usa questo dongle", [mac]() {
+        setAutoConnect(true);
+        if (current().connection_mode == ConnectionMode::BleObd) {
+            obd::obd().connectBLE(mac);
+            reopen_collegamento();
+            sp::message("Bluetooth", "Collegamento avviato.");
+        } else {
+            setSavedDongleMac(mac);
+            reopen_collegamento();
+            sp::message("Bluetooth", "Scelto: verra' usato quando la modalita' e' \"OBD Bluetooth\".");
+        }
+    });
+    sp::rowAction(l, "Rimuovi dall'elenco", [mac]() {
+        sp::confirm("Rimuovi dongle", "Togliere questo dongle dall'elenco? Potrai ritrovarlo con \"Cerca dispositivi\".", "Rimuovi", [mac]() {
+            if (current().saved_dongle_mac == mac) obd::obd().forgetDevice();
+            links::removeBle(mac);
+            async::postToUi([]() { reopen_collegamento(); });
+        }, true);
+    }, true);
 }
 
 void page_collegamento() {
@@ -123,9 +264,10 @@ void page_collegamento() {
                    []() { return static_cast<int>(current().connection_mode); },
                    [](int i) {
                        const auto m = static_cast<ConnectionMode>(i);
-                       connection::switchMode(m);
-                       if (m == ConnectionMode::WifiObd && current().saved_wifi_ssid.empty())
-                           sp::message("OBD Wi-Fi", "Collega prima la rete Wi-Fi del dongle: Collegamento > Wi-Fi > Cerca reti.");
+                       connection::switchMode(m);   // non cancella nulla di salvato
+                       links::WifiEntry d;
+                       if (m == ConnectionMode::WifiObd && current().saved_wifi_ssid.empty() && !links::lastWifi(WifiRole::Dongle, d))
+                           sp::message("OBD Wi-Fi", "Collega la rete Wi-Fi del dongle: Collegamento > Cerca reti, poi scegli \"Dongle OBD Wi-Fi\".");
                    });
     });
     sp::rowToggle(l, "Connessione automatica", []() { return current().auto_connect; }, [](bool v) { setAutoConnect(v); });
@@ -138,45 +280,38 @@ void page_collegamento() {
         return e.empty() ? string("nessuno") : e;
     });
 
-    sp::section(l, "BLUETOOTH");
-    sp::rowValue(l, "Dispositivo", []() { const string m = current().saved_dongle_mac; return m.empty() ? string("nessuno") : m; });
-    sp::rowAction(l, "Cerca dispositivi", []() {
-        if (already_connected_msg()) return;
-        sp::message("Bluetooth", "Ricerca in corso (5 secondi)...");
-        async::runInWorker([]() {
-            obd::BleStream temp;
-            temp.begin({});
-            auto devs = temp.scanDevices(5);
-            async::postToUi([devs]() { sp::popAll(); page_collegamento(); open_ble_results(devs); });
-        });
-    });
-    sp::rowAction(l, "Dimentica dispositivo", []() {
-        sp::confirm("Dimentica dispositivo", "Il display non si colleghera' piu' a questo adattatore finche' non lo associ di nuovo.", "Dimentica",
-                    []() { obd::obd().forgetDevice(); }, true);
-    }, true);
+    sp::section(l, "DONGLE BLUETOOTH SALVATI");
+    const auto bl = links::bleList();
+    if (bl.empty()) sp::rowInfo(l, []() { return string("Nessun dongle salvato: usa \"Cerca dispositivi\"."); });
+    for (const auto& b : bl) {
+        const string mac = b.mac;
+        sp::rowNav(l, b.name.empty() ? b.mac.c_str() : b.name.c_str(),
+                   [mac]() { return string(current().saved_dongle_mac == mac ? "in uso" : mac.c_str()); },
+                   [mac]() { page_ble_item(mac); });
+    }
+    sp::rowAction(l, "Cerca dispositivi", []() { ble_scan(); });
 
-    sp::section(l, "WI-FI");
-    sp::rowValue(l, "Rete", []() {
+    sp::section(l, "RETI WI-FI SALVATE");
+    const auto wl = links::wifiList();
+    if (wl.empty()) sp::rowInfo(l, []() { return string("Nessuna rete salvata: usa \"Cerca reti\"."); });
+    for (const auto& w : wl) {
+        const string ssid = w.ssid;
+        const WifiRole role = w.role;
+        sp::rowNav(l, ssid.c_str(), [ssid, role]() {
+            auto& wm = wifi::WifiManager::instance();
+            const bool on = wm.isConnected() && wm.getCurrentSSID() == ssid;
+            return string(role == WifiRole::Dongle ? "Dongle OBD" : "Internet") + (on ? " \xC2\xB7 collegata" : "");
+        }, [ssid]() { page_wifi_item(ssid); });
+    }
+    sp::rowAction(l, "Cerca reti", []() { g_web_after_connect = false; wifi_scan(); });
+    sp::rowValue(l, "Collegato a", []() {
         auto& wm = wifi::WifiManager::instance();
-        if (wm.isConnected()) return wm.getCurrentSSID();
-        const string s = current().saved_wifi_ssid;
-        return s.empty() ? string("non collegato") : s + " (salvata)";
+        return wm.isConnected() ? wm.getCurrentSSID() + " \xC2\xB7 " + wm.getCurrentIP() : string("nessuna rete");
     });
-    sp::rowValue(l, "Indirizzo IP", []() { auto& wm = wifi::WifiManager::instance(); return wm.isConnected() ? wm.getCurrentIP() : string("-"); });
-    sp::rowAction(l, "Cerca reti", []() {
-        if (already_connected_msg()) return;
-        sp::message("Wi-Fi", "Ricerca reti in corso...");
-        wifi::WifiManager::instance().startScan([](const std::vector<wifi::WifiNetwork>& nets) {
-            async::postToUi([nets]() { sp::popAll(); page_collegamento(); open_wifi_results(nets); });
-        });
+    sp::rowAction(l, "Scollega Wi-Fi", []() {
+        wifi::WifiManager::instance().disconnect();   // le reti restano salvate
+        sp::message("Wi-Fi", "Scollegato. Le reti restano salvate.");
     });
-    sp::rowAction(l, "Disconnetti Wi-Fi", []() {
-        sp::confirm("Disconnetti Wi-Fi", "Il display si scollega dalla rete e dimentica le credenziali salvate.", "Disconnetti", []() {
-            wifi::WifiManager::instance().disconnect();
-            obd::obd().forgetDevice();
-            setSavedWifi("", "");
-        }, true);
-    }, true);
 }
 
 // =========================================================== CAN
@@ -790,8 +925,23 @@ void page_web() {
     sp::rowValue(l, "Indirizzo", []() { return web::getServerUrl(); });
     sp::rowAction(l, "Avvia / arresta", []() {
         if (web::isRunning()) { web::stopServer(); return; }
-        if (web::startServer() == ESP_ERR_INVALID_STATE) sp::message("Web Server", "Collega prima il display a una rete Wi-Fi (Collegamento > Wi-Fi).");
+        if (wifi::WifiManager::instance().isConnected()) { start_web_server(); return; }
+        // non collegato: si collega all'ultima rete "internet" salvata, altrimenti propone di cercarne una
+        links::WifiEntry e;
+        if (links::lastWifi(WifiRole::Internet, e)) {
+            g_web_after_connect = true;
+            wifi_connect_checked(e.ssid, e.pass, e.role);
+            return;
+        }
+        sp::confirm("Web Server", "Il display non e' collegato a nessuna rete Wi-Fi. Vuoi cercarne una (casa o hotspot del telefono)?",
+                    "Cerca reti", []() { g_web_after_connect = true; wifi_scan(); }, false);
     });
+    sp::section(l, "RETE");
+    sp::rowValue(l, "Collegato a", []() {
+        auto& wm = wifi::WifiManager::instance();
+        return wm.isConnected() ? wm.getCurrentSSID() : string("nessuna rete");
+    });
+    sp::rowAction(l, "Collega a una rete", []() { g_web_after_connect = true; wifi_scan(); });
     sp::rowInfo(l, []() {
         return string("Dal browser di telefono o PC puoi scaricare i log CSV e aggiornare il firmware. "
                       "Il server si spegne da solo dopo 10 minuti.");
@@ -889,6 +1039,16 @@ lv_obj_t* rootList() { return g_root; }
 int debugDepth() { return sp::depth(); }
 lv_obj_t* debugTopList() { return sp::topList(); }
 void debugOpenPageOrder() { page_order_edit(); }
+void debugWifiScan() { g_web_after_connect = false; wifi_scan(); }
+void debugWebStart() {
+    page_web();
+    if (!web::isRunning() && !wifi::WifiManager::instance().isConnected()) {
+        links::WifiEntry e;
+        if (!links::lastWifi(WifiRole::Internet, e))
+            sp::confirm("Web Server", "Il display non e' collegato a nessuna rete Wi-Fi. Vuoi cercarne una (casa o hotspot del telefono)?",
+                        "Cerca reti", []() { g_web_after_connect = true; wifi_scan(); }, false);
+    }
+}
 lv_obj_t* debugOrderButton(int pos, int which) {
     return (pos >= 0 && pos < page_order::kData && which >= 0 && which < 3) ? g_order_btns[pos][which] : nullptr;
 }

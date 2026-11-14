@@ -21,5 +21,8 @@ lv_obj_t* debugTopList();
 int debugCategoryCount();
 /// Solo test: apre "Ordine pagine"; pulsante della riga pos (0 occhio, 1 su, 2 giu')
 void debugOpenPageOrder();
+/// Solo test: ricerca reti Wi-Fi come dal pulsante; avvio web server senza rete
+void debugWifiScan();
+void debugWebStart();
 lv_obj_t* debugOrderButton(int pos, int which);
 }

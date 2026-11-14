@@ -23,8 +23,11 @@ class WifiManager {
 public:
     static WifiManager& instance();
 
-    /// Inizializza il modulo WiFi (chiama esp_netif_init, esp_event_loop_create_default)
-    void init();
+    /// Inizializza il modulo WiFi (chiama esp_netif_init, esp_event_loop_create_default);
+    /// false se la radio Wi-Fi non si avvia (vedi lastError)
+    bool init();
+    /// Ultimo errore di avvio/scansione (vuoto = nessuno)
+    std::string lastError() const { return last_error_; }
 
     /// Avvia una scansione delle reti in background. Il callback viene chiamato asincronamente.
     void startScan(ScanCallback cb);
@@ -58,6 +61,8 @@ private:
     std::string current_gw_;
     std::string current_netmask_;
     std::string current_dns_;
+    std::string last_error_;
+    std::string pending_ssid_, pending_pass_;   ///< per il task di connessione
     
     ScanCallback scan_cb_;
     ConnectCallback connect_cb_;

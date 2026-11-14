@@ -2,6 +2,8 @@
 
 #include <esp_log.h>
 #include <esp_wifi.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <esp_netif.h>
 #include <nvs_flash.h>
 #include <cstring>
@@ -20,82 +22,118 @@ WifiManager& WifiManager::instance() {
     return inst;
 }
 
-void WifiManager::init() {
-    if (initialized_) return;
+bool WifiManager::init() {
+    if (initialized_) return true;
 
     // L'inizializzazione del netif/event loop è di solito fatta in app_main o qui
     esp_netif_init();
-    esp_event_loop_create_default();
-    netif_ = esp_netif_create_default_wifi_sta();
+    esp_event_loop_create_default();   // ESP_ERR_INVALID_STATE se esiste gia': va bene
+    if (!netif_) netif_ = esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
+    esp_err_t err = esp_wifi_init(&cfg);
+    if (err != ESP_OK) {
+        last_error_ = std::string("avvio Wi-Fi non riuscito (") + esp_err_to_name(err) + ")";
+        ESP_LOGE(TAG, "esp_wifi_init: %s", esp_err_to_name(err));
+        return false;
+    }
 
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &WifiManager::eventHandler, this, nullptr);
     esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &WifiManager::eventHandler, this, nullptr);
 
     esp_wifi_set_mode(WIFI_MODE_STA);
-    esp_wifi_start();
+    err = esp_wifi_start();
+    if (err != ESP_OK) {
+        last_error_ = std::string("avvio Wi-Fi non riuscito (") + esp_err_to_name(err) + ")";
+        ESP_LOGE(TAG, "esp_wifi_start: %s", esp_err_to_name(err));
+        return false;
+    }
 
     initialized_ = true;
+    last_error_.clear();
     ESP_LOGI(TAG, "WiFi Manager inizializzato");
+    return true;
 }
 
 void WifiManager::startScan(ScanCallback cb) {
-    if (!initialized_) init();
     if (scanning_) {
         ESP_LOGW(TAG, "Scansione gia' in corso");
         if (cb) cb({});
         return;
     }
-
     scan_cb_ = std::move(cb);
     scanning_ = true;
-
-    wifi_scan_config_t scan_config = {};
-    scan_config.show_hidden = true;
-    
-    // Disconnect if we are trying to scan and connect might be blocking it (optional, but good for reliable scanning)
-    esp_wifi_disconnect();
-
-    esp_err_t err = esp_wifi_scan_start(&scan_config, false);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Errore avvio scansione: %s", esp_err_to_name(err));
-        scanning_ = false;
-        if (scan_cb_) {
-            scan_cb_({});
-            scan_cb_ = nullptr;
+    // Avvio radio e ricerca in un task a parte: subito dopo esp_wifi_start il
+    // co-processore Wi-Fi (C6, via esp_hosted) non e' ancora pronto e la
+    // ricerca fallisce con ESP_ERR_WIFI_STATE (era il motivo per cui la
+    // ricerca non trovava mai niente). Si riprova per qualche secondo, senza
+    // bloccare l'interfaccia.
+    xTaskCreate([](void* arg) {
+        auto* self = static_cast<WifiManager*>(arg);
+        esp_err_t err = ESP_FAIL;
+        if (self->initialized_ || self->init()) {
+            wifi_scan_config_t scan_config = {};
+            scan_config.show_hidden = true;
+            // Niente disconnessione: la ricerca funziona anche con una rete
+            // collegata, cosi' cercare non fa perdere il collegamento attuale
+            for (int attempt = 0; attempt < 20; ++attempt) {
+                err = esp_wifi_scan_start(&scan_config, false);
+                if (err != ESP_ERR_WIFI_STATE) break;
+                vTaskDelay(pdMS_TO_TICKS(250));
+            }
+            if (err != ESP_OK) self->last_error_ = std::string("ricerca non riuscita (") + esp_err_to_name(err) + ")";
+            else self->last_error_.clear();
         }
-    }
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Errore avvio scansione: %s", esp_err_to_name(err));
+            self->scanning_ = false;
+            if (self->scan_cb_) {
+                auto cb2 = std::move(self->scan_cb_);
+                self->scan_cb_ = nullptr;
+                cb2({});
+            }
+        }
+        vTaskDelete(nullptr);
+    }, "wifi_scan", 4096, this, 3, nullptr);
 }
 
 void WifiManager::connect(const std::string& ssid, const std::string& password, ConnectCallback cb) {
-    if (!initialized_) init();
-    
     connect_cb_ = std::move(cb);
     connected_ = false;
     current_ip_ = "";
     current_ssid_ = ssid;
-
-    wifi_config_t wifi_config = {};
-    std::strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), ssid.c_str(), sizeof(wifi_config.sta.ssid) - 1);
-    std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password), password.c_str(), sizeof(wifi_config.sta.password) - 1);
-    
-    // For OBD dongles, they might be open or WPA2
-    wifi_config.sta.threshold.authmode = password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
-
-    esp_wifi_disconnect();
-    esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-    
-    ESP_LOGI(TAG, "Tentativo connessione a SSID: %s", ssid.c_str());
-    esp_err_t err = esp_wifi_connect();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Errore avvio connessione: %s", esp_err_to_name(err));
-        if (connect_cb_) {
-            connect_cb_(false, "", "");
-            connect_cb_ = nullptr;
+    pending_ssid_ = ssid;
+    pending_pass_ = password;
+    // come la ricerca: avvio radio e tentativi in un task, senza bloccare l'interfaccia
+    xTaskCreate([](void* arg) {
+        auto* self = static_cast<WifiManager*>(arg);
+        esp_err_t err = ESP_FAIL;
+        if (self->initialized_ || self->init()) {
+            wifi_config_t wifi_config = {};
+            std::strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), self->pending_ssid_.c_str(), sizeof(wifi_config.sta.ssid) - 1);
+            std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password), self->pending_pass_.c_str(), sizeof(wifi_config.sta.password) - 1);
+            // reti aperte (molti dongle) oppure WPA2 o superiore
+            wifi_config.sta.threshold.authmode = self->pending_pass_.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+            esp_wifi_disconnect();
+            esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+            ESP_LOGI(TAG, "Tentativo connessione a SSID: %s", self->pending_ssid_.c_str());
+            for (int attempt = 0; attempt < 20; ++attempt) {
+                err = esp_wifi_connect();
+                if (err != ESP_ERR_WIFI_STATE) break;
+                vTaskDelay(pdMS_TO_TICKS(250));
+            }
         }
-    }
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Errore avvio connessione: %s", esp_err_to_name(err));
+            if (self->last_error_.empty()) self->last_error_ = std::string("connessione non avviata (") + esp_err_to_name(err) + ")";
+            if (self->connect_cb_) {
+                auto cb2 = std::move(self->connect_cb_);
+                self->connect_cb_ = nullptr;
+                cb2(false, "", "");
+            }
+        }
+        vTaskDelete(nullptr);
+    }, "wifi_conn", 4096, this, 3, nullptr);
 }
 
 void WifiManager::disconnect() {
@@ -156,10 +194,15 @@ void WifiManager::eventHandler(void* arg, esp_event_base_t event_base, int32_t e
             self->scan_cb_ = nullptr;
         }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGI(TAG, "WiFi disconnesso");
+        const auto* ev = static_cast<wifi_event_sta_disconnected_t*>(event_data);
+        const uint8_t reason = ev ? ev->reason : 0;
+        ESP_LOGI(TAG, "WiFi disconnesso (motivo %u)", reason);
         self->connected_ = false;
-        self->current_ssid_ = "";
         abarth::web::stopServer();
+        // L'uscita volontaria dalla rete precedente (cambio rete) non e' un
+        // fallimento della nuova connessione: la richiamata aspetta l'esito vero
+        if (reason == WIFI_REASON_ASSOC_LEAVE && self->connect_cb_) return;
+        self->current_ssid_ = "";
         if (self->connect_cb_) {
             self->connect_cb_(false, "", "");
             self->connect_cb_ = nullptr;

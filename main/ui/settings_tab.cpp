@@ -476,7 +476,7 @@ bool check_already_connected() {
 
 void wifi_scan_cb(lv_event_t* /*e*/) {
     if (g_scan_in_progress) return;
-    if (check_already_connected()) return;
+    // la ricerca Wi-Fi e' sempre permessa: non stacca la rete collegata
     g_scan_in_progress = true;
 
     lv_obj_t* modal = create_modal("Scansione WiFi...");

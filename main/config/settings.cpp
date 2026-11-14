@@ -1,4 +1,5 @@
 #include "config/settings.h"
+#include "config/saved_links.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -333,6 +334,8 @@ void setDebugMode(bool enable) {
 void setSavedDongleMac(const std::string& mac) {
     { Lock l; g_settings.saved_dongle_mac = mac; }
     save_str(kKeyDongleMac, mac);
+    // anche nell'elenco dei dongle salvati (svuotare non lo toglie dall'elenco)
+    if (!mac.empty()) links::addBle("", mac);
 }
 
 void setSavedWifi(const std::string& ssid, const std::string& pass) {
@@ -343,6 +346,8 @@ void setSavedWifi(const std::string& ssid, const std::string& pass) {
     }
     save_str(kKeyWifiSsid, ssid);
     save_str(kKeyWifiPass, pass);
+    // anche nell'elenco delle reti salvate, come rete del dongle OBD
+    if (!ssid.empty()) links::addWifi(ssid, pass, links::WifiRole::Dongle);
 }
 
 float tempInCurrentUnit(float c) {

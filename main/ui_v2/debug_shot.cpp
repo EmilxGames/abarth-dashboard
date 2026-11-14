@@ -312,6 +312,34 @@ void sim_swipe_test() {
     settings::setDebugMode(dbg0);
 }
 
+void wifi_test() {
+    // Collegamento: elenchi salvati, poi ricerca reti (sempre permessa) e
+    // web server senza rete (deve proporre di cercarne una)
+    if (lvgl_port_lock(-1)) { showPage(Page::Setup); settings_pages::debugOpen(0); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(600));
+    dump(100);
+    if (lvgl_port_lock(-1)) { settings_pages::debugScrollBottom(); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(400));
+    dump(101);
+    if (lvgl_port_lock(-1)) { settings_pages::debugWifiScan(); lvgl_port_unlock(); }
+    int depth = 0;
+    for (int k = 0; k < 100 && depth < 2; ++k) {   // aspetta l'elenco delle reti (max 10 s)
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if (lvgl_port_lock(-1)) { depth = settings_pages::debugDepth(); lvgl_port_unlock(); }
+    }
+    vTaskDelay(pdMS_TO_TICKS(400));
+    dump(102);
+    ESP_LOGW("TOUCH_TEST", "ricerca Wi-Fi (modalita' %d): elenco reti aperto=%d %s", (int)settings::current().connection_mode,
+             depth >= 2, depth >= 2 ? "OK" : "ERRORE");
+    if (lvgl_port_lock(-1)) { settings_pages::closeSubPages(); settings_pages::debugOpen(8); settings_pages::closeSubPages(); lvgl_port_unlock(); }
+    if (lvgl_port_lock(-1)) { settings_pages::debugWebStart(); lvgl_port_unlock(); }
+    vTaskDelay(pdMS_TO_TICKS(500));
+    dump(103);
+    const bool offer = sp::dialogOpen();
+    ESP_LOGW("TOUCH_TEST", "web server senza rete: propone di cercare una rete=%d %s", offer, offer ? "OK" : "ERRORE");
+    if (lvgl_port_lock(-1)) { settings_pages::closeSubPages(); showPage(Page::Guida); lvgl_port_unlock(); }
+}
+
 void dialog_test() {
     // finestra di conferma: un tocco fuori la chiude, un tocco dentro no
     if (lvgl_port_lock(-1)) {
@@ -373,6 +401,7 @@ void task(void*) {
     // i test usano l'ordine pagine predefinito (quello dell'utente si ripristina dopo)
     const page_order::Order user_order = pageOrder();
     if (lvgl_port_lock(-1)) { setPageOrder(page_order::defaults()); lvgl_port_unlock(); }
+    wifi_test();
     sim_swipe_test();
     if (lvgl_port_lock(-1)) { setPageOrder(user_order); lvgl_port_unlock(); }
     dialog_test();

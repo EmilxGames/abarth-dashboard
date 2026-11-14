@@ -13,6 +13,7 @@
 #include "esp_hosted.h"
 
 #include "config/alert_manager.h"
+#include "config/connection.h"
 #include "config/settings.h"
 #include "config/warmup_manager.h"
 #include "data/data_store.h"
@@ -252,6 +253,9 @@ extern "C" void app_main(void) {
         const esp_err_t rb = esp_ota_mark_app_valid_cancel_rollback();
         DIAG("firmware confermato valido (rollback annullato): %s", esp_err_to_name(rb));
     }
+
+    // Rete Wi-Fi salvata per internet/web server (non in modalita' OBD Wi-Fi)
+    abarth::connection::autoConnectInternetWifi();
 
     // Avvio completo: azzera il contatore (la UI v2 lo azzera anche dopo 10 s)
     abarth::settings::setBootFailCount(0);
