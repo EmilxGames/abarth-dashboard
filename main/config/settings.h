@@ -85,6 +85,7 @@ struct Settings {
     UiTheme   ui_theme     = UiTheme::MinimalFunctional;
     UiStyle      ui_style     = UiStyle::Classic;  ///< Classico o nuova UI Moderno
     uint8_t      ui_accent    = 0;     ///< UI Moderno: 0 bianco, 1 rosso, 2 azzurro, 3 ambra
+    uint8_t      ui_background = 0;    ///< UI Moderno: sfondo (0 nessuno, vedi ui_v2/background.h)
     uint16_t     redline_rpm  = 6200;  ///< UI Moderno: giri da cui la barra diventa rossa
     /// Texture di sfondo.
     BgTexture bg_texture   = BgTexture::Original;
@@ -180,6 +181,7 @@ void setUiStyle(UiStyle style);
 
 /// Colore accento e soglia giri della UI Moderno.
 void setUiAccent(uint8_t idx);
+void setUiBackground(uint8_t idx);
 void setRedlineRpm(uint16_t rpm);
 
 /// Flag di sicurezza della nuova UI: impostato prima di costruirla, azzerato

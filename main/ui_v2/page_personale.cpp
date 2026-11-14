@@ -383,6 +383,8 @@ lv_obj_t* debugPencil() { return g_pencil; }
 
 void buildPencil(lv_obj_t* scr, int32_t x, int32_t y, int32_t wd, int32_t ht) {
     g_pencil = w::box(scr, x, y, wd, ht, kBg, 16);
+    lv_obj_set_style_bg_opa(g_pencil, LV_OPA_TRANSP, 0);   // si vede lo sfondo
+    lv_obj_set_style_bg_opa(g_pencil, LV_OPA_COVER, LV_STATE_PRESSED);
     lv_obj_add_flag(g_pencil, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(g_pencil, 8);
     lv_obj_remove_flag(g_pencil, LV_OBJ_FLAG_GESTURE_BUBBLE);

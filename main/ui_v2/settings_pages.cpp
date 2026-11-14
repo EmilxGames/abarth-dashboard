@@ -32,6 +32,7 @@
 #include "storage/telemetry_logger.h"
 #include "storage/web_server.h"
 #include "ui_v2/async_ui.h"
+#include "ui_v2/background.h"
 #include "ui_v2/metric_info.h"
 #include "ui_v2/sp_kit.h"
 #include "ui_v2/ui_v2.h"
@@ -597,6 +598,13 @@ void page_display() {
             if (i == static_cast<int>(current().ui_style)) return;
             setUiStyle(static_cast<UiStyle>(i));
             sp::confirm("Stile interfaccia", "Lo stile si applica al riavvio.", "Riavvia ora", []() { esp_restart(); }, false);
+        });
+    });
+    sp::rowNav(l, "Sfondo", []() { return string(background::kNames[current().ui_background % background::Count]); }, []() {
+        std::vector<std::string> names(background::kNames, background::kNames + background::Count);
+        sp::choice("Sfondo", names, []() { return static_cast<int>(current().ui_background); }, [](int i) {
+            setUiBackground(static_cast<uint8_t>(i));
+            background::apply(static_cast<uint8_t>(i));   // subito, senza riavvio
         });
     });
     sp::rowNav(l, "Colore accento", []() { return string(theme::kAccentNames[current().ui_accent & 3]); }, []() {

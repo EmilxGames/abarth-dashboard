@@ -24,6 +24,7 @@ constexpr const char* kKeyUiTheme     = "uitheme";
 constexpr const char* kKeyUiStyle     = "ui_style";
 constexpr const char* kKeyUiV2Pending  = "ui_v2_pend";
 constexpr const char* kKeyUiAccent     = "ui_accent";
+constexpr const char* kKeyUiBackground = "ui_bg";
 constexpr const char* kKeyRedline      = "redline";
 constexpr const char* kKeyBootFail     = "boot_fail";
 constexpr const char* kKeyBgTexture   = "bgtexture";
@@ -152,6 +153,8 @@ bool init() {
         g_settings.ui_style = (st == 1) ? UiStyle::Racing : UiStyle::Classic;  // valori ignoti -> Classico
         const uint8_t ac = load_u8(kKeyUiAccent, 0);
         g_settings.ui_accent = ac <= 3 ? ac : 0;
+        const uint8_t bg = load_u8(kKeyUiBackground, 0);
+        g_settings.ui_background = bg <= 6 ? bg : 0;
         const uint32_t rl = load_u32(kKeyRedline, 6200);
         g_settings.redline_rpm = (rl >= 3000 && rl <= 9000) ? static_cast<uint16_t>(rl) : 6200;
     }
@@ -270,6 +273,11 @@ void setUiTheme(UiTheme /*t*/) {
 void setUiStyle(UiStyle style) {
     g_settings.ui_style = style;
     save_u8(kKeyUiStyle, static_cast<uint8_t>(style));
+}
+
+void setUiBackground(uint8_t idx) {
+    g_settings.ui_background = idx <= 6 ? idx : 0;
+    save_u8(kKeyUiBackground, g_settings.ui_background);
 }
 
 void setUiAccent(uint8_t idx) {

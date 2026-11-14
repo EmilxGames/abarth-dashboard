@@ -19,6 +19,7 @@
 #include "ui_v2/settings_pages.h"
 #include "ui_v2/data_fmt.h"
 #include "ui_v2/alert_levels.h"
+#include "ui_v2/background.h"
 #include "ui_v2/theme.h"
 #include "ui_v2/widgets.h"
 
@@ -420,12 +421,15 @@ void build() {
     // a destra: matita di PERSONALE e ingranaggio (la fascia si ferma prima)
     const int32_t pencil_x = W - 12 - kGearW - 8 - kGearW;
     lv_obj_t* tap = w::box(g_scr, 0, kPageBottom, pencil_x - 16, H - kPageBottom, kBg);
+    lv_obj_set_style_bg_opa(tap, LV_OPA_TRANSP, 0);   // si vede lo sfondo
     lv_obj_add_flag(tap, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(tap, dots_tap_cb, LV_EVENT_CLICKED, nullptr);
     for (int i = 0; i < kPages; ++i) g_dots[i] = w::box(g_scr, 0, 0, kDot, kDot, kDotIdle, kDot / 2);
 
     // Ingranaggio in basso a destra, sulla riga dei pallini (sotto l'ultima scheda)
     lv_obj_t* gear = w::box(g_scr, W - kGearW - 12, kDotsY - kGearH / 2, kGearW, kGearH, kBg);
+    lv_obj_set_style_bg_opa(gear, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(gear, LV_OPA_COVER, LV_STATE_PRESSED);
     lv_obj_add_flag(gear, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(gear, 8);
     lv_obj_remove_flag(gear, LV_OBJ_FLAG_GESTURE_BUBBLE);
@@ -441,6 +445,7 @@ void build() {
     lv_obj_set_pos(g_hint, kMargin, kDotsY - lv_font_get_line_height(fontLabel()) / 2);
     lv_obj_add_flag(g_hint, LV_OBJ_FLAG_HIDDEN);
 
+    background::create(g_scr);   // sfondo scelto (fisso, sotto a tutto)
     showPage(g_seq[0]);   // la prima pagina dell'ordine scelto
     g_before_setup = g_seq[0];
     update_status();

@@ -16,6 +16,7 @@
 #include "config/warmup_manager.h"
 #include "display/lvgl_v8_port.h"
 #include "ui_v2/ui_v2.h"
+#include "ui_v2/background.h"
 #include "storage/web_server.h"
 #include "lwip/sockets.h"
 #include "wifi_manager.h"
@@ -348,6 +349,60 @@ void slow_client(void*) {
     vTaskDelete(nullptr);
 }
 
+void bg_test() {
+    // Ogni sfondo (schermata) e misure: cambio pagina e scorrimento PERSONALE
+    const uint8_t saved = settings::current().ui_background;
+    auto ui = [](auto fn) { if (lvgl_port_lock(-1)) { fn(); lvgl_port_unlock(); } };
+    for (int st = 0; st < background::Count; ++st) {
+        ui([st]() { background::apply(st); showPage(Page::Guida); });
+        for (int k = 0; k < 8; ++k) { fill_demo(); vTaskDelay(pdMS_TO_TICKS(100)); }
+        dump(130 + st);
+    }
+    ui([]() { showPage(Page::Personale); });
+    vTaskDelay(pdMS_TO_TICKS(500));
+    dump(140);   // PERSONALE con l'ultimo sfondo
+    const int styles[] = {background::None, background::Carbon, background::Scorpion};
+    for (int st : styles) {
+        ui([st]() { background::apply(st); showPage(Page::Guida); });
+        vTaskDelay(pdMS_TO_TICKS(500));
+        // cambio pagina: tempo medio con disegno completo
+        int64_t sum = 0;
+        for (int i = 0; i < 10; ++i) {
+            const Page p = (i & 1) ? Page::Guida : Page::Temperature;
+            const int64_t t0 = esp_timer_get_time();
+            ui([p]() { showPage(p); lv_refr_now(nullptr); });
+            sum += esp_timer_get_time() - t0;
+            vTaskDelay(pdMS_TO_TICKS(150));
+        }
+        // scorrimento PERSONALE: aggiornamenti dello schermo al secondo durante il trascinamento
+        // (nell'editor la griglia ha spazio per scorrere anche con poche schede)
+        ui([]() { showPage(Page::Personale); personale::debugMode(1); });
+        vTaskDelay(pdMS_TO_TICKS(400));
+        static volatile uint32_t refr = 0;
+        lv_display_t* d = lv_display_get_default();
+        auto cb = [](lv_event_t*) { ++refr; };
+        ui([&]() { lv_display_add_event_cb(d, cb, LV_EVENT_REFR_READY, nullptr); });
+        refr = 0;
+        const int64_t t0 = esp_timer_get_time();
+        for (int k = 0; k < 2; ++k) { drag(300, 650, 150, 1000); drag(300, 150, 650, 1000); }
+        const float fps = refr * 1e6f / (esp_timer_get_time() - t0);
+        ui([]() { personale::debugMode(0); });
+        ui([&]() { lv_display_remove_event_cb_with_user_data(d, cb, nullptr); });
+        ESP_LOGW("TOUCH_TEST", "sfondo %-18s: cambio pagina %lld ms, scorrimento PERSONALE %.1f fps",
+                 background::kNames[st], (long long)(sum / 10 / 1000), fps);
+    }
+    // con la filigrana del logo sopra a tutto, swipe e tocchi devono passare
+    ui([]() { background::apply(background::Scorpion); showPage(Page::Guida); });
+    vTaskDelay(pdMS_TO_TICKS(400));
+    hswipe(520, 80, 500);
+    const bool sw = debugCurrentPage() == Page::Temperature;
+    tap(600 - 12 - 36, 1000);   // ingranaggio
+    vTaskDelay(pdMS_TO_TICKS(400));
+    const bool gear = debugCurrentPage() == Page::Setup;
+    ESP_LOGW("TOUCH_TEST", "filigrana logo: swipe=%d ingranaggio=%d %s", sw, gear, (sw && gear) ? "OK" : "ERRORE");
+    ui([saved]() { background::apply(saved); showPage(Page::Guida); });
+}
+
 void web_test() {
     // Arresto del web server in tutti i modi, senza rete (server raggiunto da
     // un client sul display stesso): pulsante (task LVGL) con client collegato,
@@ -552,6 +607,7 @@ void task(void*) {
     // i test usano l'ordine pagine predefinito (quello dell'utente si ripristina dopo)
     const page_order::Order user_order = pageOrder();
     if (lvgl_port_lock(-1)) { setPageOrder(page_order::defaults()); lvgl_port_unlock(); }
+    bg_test();
     web_test();
     keyboard_test();
     wifi_test();
