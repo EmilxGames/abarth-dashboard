@@ -20,6 +20,7 @@
 #include "can/can_manager.h"
 #include "config/alert_manager.h"
 #include "config/connection.h"
+#include "config/auto_brightness.h"
 #include "config/saved_links.h"
 #include "config/settings.h"
 #include "config/warmup_manager.h"
@@ -574,11 +575,67 @@ string order_summary() {
 }
 
 // =========================================================== DISPLAY
+string hhmm(int m) { return m < 0 ? string("-") : fmt("%02d:%02d", (m / 60) % 24, m % 60); }
+
+void page_display();
+
+void reopen_display() { async::postToUi([]() { sp::pop(); page_display(); }); }
+
 void page_display() {
     lv_obj_t* l = sp::push("Display");
+    // --- luminosita': manuale o automatica in base all'ora (non c'e' un sensore di luce)
+    sp::section(l, "LUMINOSIT\xC3\x80");
+    static const char* const kModes[] = {"Manuale", "Automatica (alba e tramonto)", "Automatica (orari fissi)"};
+    sp::rowNav(l, "Modalit\xC3\xA0", []() { return string(kModes[current().bright_mode % 3]); }, []() {
+        sp::choice("Luminosit\xC3\xA0", {kModes[0], kModes[1], kModes[2]}, []() { return static_cast<int>(current().bright_mode); },
+                   [](int i) {
+                       setBrightnessMode(static_cast<uint8_t>(i));
+                       if (i == 0) setBrightness(current().brightness);   // torna subito alla manuale
+                       brightness::refreshNow();
+                       reopen_display();   // mostra le regolazioni della modalita' scelta
+                   });
+    });
+    const uint8_t mode = current().bright_mode;
+    if (mode == 0) {
+        sp::rowSlider(l, "Luminosit\xC3\xA0", 10, 100, []() { return static_cast<int>(current().brightness); },
+                      [](int v) { previewBrightness(static_cast<uint8_t>(v)); }, [](int v) { setBrightness(static_cast<uint8_t>(v)); });
+    } else {
+        sp::rowSlider(l, "Di giorno", 10, 100, []() { return static_cast<int>(current().bright_day); },
+                      [](int v) { previewBrightness(static_cast<uint8_t>(v)); },
+                      [](int v) { setBrightnessDayNight(static_cast<uint8_t>(v), current().bright_night); brightness::refreshNow(); });
+        sp::rowSlider(l, "Di notte", 10, 100, []() { return static_cast<int>(current().bright_night); },
+                      [](int v) { previewBrightness(static_cast<uint8_t>(v)); },
+                      [](int v) { setBrightnessDayNight(current().bright_day, static_cast<uint8_t>(v)); brightness::refreshNow(); });
+        if (mode == 2) {
+            sp::rowStepper(l, "Giorno dalle", []() { return hhmm(current().day_from_min); },
+                           []() { setDayNightTimes((current().day_from_min + 1440 - 15) % 1440, current().night_from_min); },
+                           []() { setDayNightTimes((current().day_from_min + 15) % 1440, current().night_from_min); });
+            sp::rowStepper(l, "Notte dalle", []() { return hhmm(current().night_from_min); },
+                           []() { setDayNightTimes(current().day_from_min, (current().night_from_min + 1440 - 15) % 1440); },
+                           []() { setDayNightTimes(current().day_from_min, (current().night_from_min + 15) % 1440); });
+        } else {
+            sp::rowValue(l, "Alba \xC2\xB7 tramonto oggi", []() {
+                const auto st = brightness::status();
+                return st.time_valid ? hhmm(st.sunrise_min) + " \xC2\xB7 " + hhmm(st.sunset_min) : string("ora non impostata");
+            });
+            sp::rowStepper(l, "Latitudine", []() { return fmt("%.1f\xC2\xB0", current().lat_x100 / 100.0f); },
+                           []() { setLocation(current().lat_x100 - 50, current().lon_x100); },
+                           []() { setLocation(current().lat_x100 + 50, current().lon_x100); });
+            sp::rowStepper(l, "Longitudine", []() { return fmt("%.1f\xC2\xB0", current().lon_x100 / 100.0f); },
+                           []() { setLocation(current().lat_x100, current().lon_x100 - 50); },
+                           []() { setLocation(current().lat_x100, current().lon_x100 + 50); });
+        }
+        sp::rowValue(l, "Adesso", []() {
+            const auto st = brightness::status();
+            if (!st.time_valid) return string("ora non valida: manuale");
+            return fmt("%s \xC2\xB7 %u%%", st.is_day ? "giorno" : "notte", st.current);
+        });
+        sp::rowInfo(l, []() {
+            return string("Il passaggio tra giorno e notte e' graduale (circa 45 secondi). Serve l'ora giusta: "
+                          "Impostazioni > Data e ora.");
+        });
+    }
     sp::section(l, "SCHERMO");
-    sp::rowSlider(l, "Luminosit\xC3\xA0", 10, 100, []() { return static_cast<int>(current().brightness); },
-                  [](int v) { previewBrightness(static_cast<uint8_t>(v)); }, [](int v) { setBrightness(static_cast<uint8_t>(v)); });
     sp::rowNav(l, "Orientamento", []() {
         const auto o = current().screen_orientation;
         return string(o == ScreenOrientation::Landscape ? "Orizzontale" : o == ScreenOrientation::Portrait ? "Verticale" : "Verticale capovolto");
@@ -751,6 +808,14 @@ void page_custom_rule(uint8_t id) {
 
 void page_allarmi() {
     lv_obj_t* l = sp::push("Allarmi");
+    sp::section(l, "AVVISI A SCHERMO");
+    sp::rowToggle(l, "Avvisi a schermo", []() { return current().alerts_onscreen; }, [](bool v) { setAlertsOnScreen(v); });
+    sp::rowToggle(l, "Avvisi dentro le Impostazioni", []() { return current().alerts_in_setup; }, [](bool v) { setAlertsInSetup(v); });
+    sp::rowInfo(l, []() {
+        return string("Nelle Impostazioni gli avvisi non coprono quello che stai facendo: compaiono quando esci. "
+                      "Gli allarmi critici (es. acqua o olio troppo caldi) si vedono sempre, come striscia "
+                      "in alto che non blocca il tocco.");
+    });
     sp::section(l, "ALLARMI STANDARD");
     for (const auto& r : config::alerts().rules()) {
         const auto t = r.type;

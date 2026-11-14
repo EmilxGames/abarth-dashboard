@@ -86,6 +86,17 @@ struct Settings {
     UiStyle      ui_style     = UiStyle::Classic;  ///< Classico o nuova UI Moderno
     uint8_t      ui_accent    = 0;     ///< UI Moderno: 0 bianco, 1 rosso, 2 azzurro, 3 ambra
     uint8_t      ui_background = 0;    ///< UI Moderno: sfondo (0 nessuno, vedi ui_v2/background.h)
+    // --- Luminosita' automatica (config/auto_brightness) ---
+    uint8_t      bright_mode   = 0;    ///< 0 manuale, 1 automatica alba/tramonto, 2 automatica orari fissi
+    uint8_t      bright_day    = 90;   ///< % di giorno (automatica)
+    uint8_t      bright_night  = 35;   ///< % di notte (automatica)
+    uint16_t     day_from_min  = 7 * 60;        ///< orari fissi: giorno dalle (minuti dalla mezzanotte)
+    uint16_t     night_from_min = 19 * 60 + 30; ///< orari fissi: notte dalle
+    int16_t      lat_x100      = 4200;  ///< alba/tramonto: latitudine x100 (Italia centrale)
+    int16_t      lon_x100      = 1250;  ///< alba/tramonto: longitudine x100
+    // --- Avvisi a schermo (UI Moderno) ---
+    bool         alerts_onscreen  = true;   ///< avvisi a schermo (i critici restano sempre)
+    bool         alerts_in_setup  = false;  ///< mostra gli avvisi anche dentro le Impostazioni
     uint16_t     redline_rpm  = 6200;  ///< UI Moderno: giri da cui la barra diventa rossa
     /// Texture di sfondo.
     BgTexture bg_texture   = BgTexture::Original;
@@ -182,6 +193,12 @@ void setUiStyle(UiStyle style);
 /// Colore accento e soglia giri della UI Moderno.
 void setUiAccent(uint8_t idx);
 void setUiBackground(uint8_t idx);
+void setBrightnessMode(uint8_t mode);
+void setBrightnessDayNight(uint8_t day_pct, uint8_t night_pct);
+void setDayNightTimes(uint16_t day_from_min, uint16_t night_from_min);
+void setLocation(int16_t lat_x100, int16_t lon_x100);
+void setAlertsOnScreen(bool on);
+void setAlertsInSetup(bool on);
 void setRedlineRpm(uint16_t rpm);
 
 /// Flag di sicurezza della nuova UI: impostato prima di costruirla, azzerato

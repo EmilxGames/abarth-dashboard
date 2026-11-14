@@ -12,6 +12,9 @@ enum class AlertLevel : uint8_t { Info, Warning, Critical };
 /// true se la UI Moderno e' attiva (banner nuovo invece del pop-up classico)
 bool alertBannerActive();
 /// Costruisce il banner dentro `host`; *out_timer riceve la label del conto alla rovescia
+/// Striscia compatta per gli allarmi critici quando gli avvisi sono nascosti:
+/// solo il titolo, non intercetta i tocchi
+void buildAlertStrip(lv_obj_t* host, const char* title, AlertLevel level);
 void buildAlertBanner(lv_obj_t* host, const char* title, const char* msg, AlertLevel level,
                       const char* ok_label, bool countdown, lv_obj_t** out_timer, lv_event_cb_t on_ok);
 }

@@ -25,6 +25,15 @@ constexpr const char* kKeyUiStyle     = "ui_style";
 constexpr const char* kKeyUiV2Pending  = "ui_v2_pend";
 constexpr const char* kKeyUiAccent     = "ui_accent";
 constexpr const char* kKeyUiBackground = "ui_bg";
+constexpr const char* kKeyBrMode       = "br_mode";
+constexpr const char* kKeyBrDay        = "br_day";
+constexpr const char* kKeyBrNight      = "br_night";
+constexpr const char* kKeyBrDayFrom    = "br_dfrom";
+constexpr const char* kKeyBrNightFrom  = "br_nfrom";
+constexpr const char* kKeyLat          = "geo_lat";
+constexpr const char* kKeyLon          = "geo_lon";
+constexpr const char* kKeyAlOnScreen   = "al_screen";
+constexpr const char* kKeyAlInSetup    = "al_setup";
 constexpr const char* kKeyRedline      = "redline";
 constexpr const char* kKeyBootFail     = "boot_fail";
 constexpr const char* kKeyBgTexture   = "bgtexture";
@@ -155,6 +164,20 @@ bool init() {
         g_settings.ui_accent = ac <= 3 ? ac : 0;
         const uint8_t bg = load_u8(kKeyUiBackground, 0);
         g_settings.ui_background = bg <= 6 ? bg : 0;
+        const uint8_t bm = load_u8(kKeyBrMode, 0);
+        g_settings.bright_mode = bm <= 2 ? bm : 0;
+        g_settings.bright_day = clamp_brightness(load_u8(kKeyBrDay, g_settings.bright_day));
+        g_settings.bright_night = clamp_brightness(load_u8(kKeyBrNight, g_settings.bright_night));
+        const uint32_t df = load_u32(kKeyBrDayFrom, g_settings.day_from_min);
+        const uint32_t nf = load_u32(kKeyBrNightFrom, g_settings.night_from_min);
+        g_settings.day_from_min = df < 1440 ? df : 7 * 60;
+        g_settings.night_from_min = nf < 1440 ? nf : 19 * 60 + 30;
+        const int32_t la = static_cast<int32_t>(load_u32(kKeyLat, static_cast<uint32_t>(static_cast<int32_t>(g_settings.lat_x100))));
+        const int32_t lo = static_cast<int32_t>(load_u32(kKeyLon, static_cast<uint32_t>(static_cast<int32_t>(g_settings.lon_x100))));
+        g_settings.lat_x100 = (la >= -9000 && la <= 9000) ? la : 4200;
+        g_settings.lon_x100 = (lo >= -18000 && lo <= 18000) ? lo : 1250;
+        g_settings.alerts_onscreen = load_u8(kKeyAlOnScreen, 1) != 0;
+        g_settings.alerts_in_setup = load_u8(kKeyAlInSetup, 0) != 0;
         const uint32_t rl = load_u32(kKeyRedline, 6200);
         g_settings.redline_rpm = (rl >= 3000 && rl <= 9000) ? static_cast<uint16_t>(rl) : 6200;
     }
@@ -273,6 +296,42 @@ void setUiTheme(UiTheme /*t*/) {
 void setUiStyle(UiStyle style) {
     g_settings.ui_style = style;
     save_u8(kKeyUiStyle, static_cast<uint8_t>(style));
+}
+
+void setBrightnessMode(uint8_t mode) {
+    g_settings.bright_mode = mode <= 2 ? mode : 0;
+    save_u8(kKeyBrMode, g_settings.bright_mode);
+}
+
+void setBrightnessDayNight(uint8_t day_pct, uint8_t night_pct) {
+    g_settings.bright_day = clamp_brightness(day_pct);
+    g_settings.bright_night = clamp_brightness(night_pct);
+    save_u8(kKeyBrDay, g_settings.bright_day);
+    save_u8(kKeyBrNight, g_settings.bright_night);
+}
+
+void setDayNightTimes(uint16_t day_from_min, uint16_t night_from_min) {
+    g_settings.day_from_min = day_from_min % 1440;
+    g_settings.night_from_min = night_from_min % 1440;
+    save_u32(kKeyBrDayFrom, g_settings.day_from_min);
+    save_u32(kKeyBrNightFrom, g_settings.night_from_min);
+}
+
+void setLocation(int16_t lat_x100, int16_t lon_x100) {
+    g_settings.lat_x100 = lat_x100 < -9000 ? -9000 : lat_x100 > 9000 ? 9000 : lat_x100;
+    g_settings.lon_x100 = lon_x100 < -18000 ? -18000 : lon_x100 > 18000 ? 18000 : lon_x100;
+    save_u32(kKeyLat, static_cast<uint32_t>(static_cast<int32_t>(g_settings.lat_x100)));
+    save_u32(kKeyLon, static_cast<uint32_t>(static_cast<int32_t>(g_settings.lon_x100)));
+}
+
+void setAlertsOnScreen(bool on) {
+    g_settings.alerts_onscreen = on;
+    save_u8(kKeyAlOnScreen, on ? 1 : 0);
+}
+
+void setAlertsInSetup(bool on) {
+    g_settings.alerts_in_setup = on;
+    save_u8(kKeyAlInSetup, on ? 1 : 0);
 }
 
 void setUiBackground(uint8_t idx) {

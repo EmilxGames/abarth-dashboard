@@ -17,6 +17,10 @@
 #include "display/lvgl_v8_port.h"
 #include "ui_v2/ui_v2.h"
 #include "ui_v2/background.h"
+#include "config/auto_brightness.h"
+#include "config/notify_log.h"
+#include "ui_v2/notify_page.h"
+#include <ctime>
 #include "storage/web_server.h"
 #include "lwip/sockets.h"
 #include "wifi_manager.h"
@@ -601,8 +605,137 @@ void order_tests() {
     if (lvgl_port_lock(-1)) { setPageOrder(page_order::defaults()); showPage(Page::Guida); lvgl_port_unlock(); }
 }
 
+void alerts_brightness_test() {
+    auto ui = [](auto fn) { if (lvgl_port_lock(-1)) { fn(); lvgl_port_unlock(); } };
+    auto shown = []() { int n = 0; if (lvgl_port_lock(-1)) { n = lv_obj_get_child_count(lv_layer_top()); lvgl_port_unlock(); } return n > 0; };
+    const auto s0 = settings::current();
+    settings::setAlertsOnScreen(true);
+    settings::setAlertsInSetup(false);
+    // 1) avviso normale nelle Impostazioni: nascosto, compare all'uscita
+    ui([]() { settings_pages::closeSubPages(); showPage(Page::Setup); });
+    vTaskDelay(pdMS_TO_TICKS(300));
+    config::alerts().triggerWarmupCompleteAlert(true);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    const bool hidden_in_setup = !shown();
+    ui([]() { showPage(Page::Guida); });
+    vTaskDelay(pdMS_TO_TICKS(500));
+    const bool shown_after = shown();
+    dump(150);
+    config::alerts().closeCurrentAlert();
+    vTaskDelay(pdMS_TO_TICKS(300));
+    // 2) allarme critico nelle Impostazioni: striscia che lascia passare il tocco
+    ui([]() { settings_pages::closeSubPages(); showPage(Page::Setup); });
+    vTaskDelay(pdMS_TO_TICKS(300));
+    bool strip = false, passes = false;
+    if (auto* r = config::alerts().getRule(config::AlertType::HighCoolantTemp)) {
+        config::alerts().triggerAlertPopup(*r, 118.0f, 0.0f, true);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        strip = shown();
+        dump(151);
+        tap(300, 64 + 56 + 30);   // sulla striscia: deve aprire la prima categoria sotto
+        vTaskDelay(pdMS_TO_TICKS(500));
+        passes = settings_pages::debugDepth() > 0;
+        config::alerts().closeCurrentAlert();
+    }
+    ui([]() { settings_pages::closeSubPages(); showPage(Page::Guida); });
+    ESP_LOGW("TOUCH_TEST", "avvisi: nascosto nelle Impostazioni=%d, mostrato all'uscita=%d, critico a striscia=%d, tocco passa=%d %s",
+             hidden_in_setup, shown_after, strip, passes, (hidden_in_setup && shown_after && strip && passes) ? "OK" : "ERRORE");
+    // 3) luminosita' automatica
+    time_t now = time(nullptr);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    const int m = lt.tm_hour * 60 + lt.tm_min;
+    settings::setBrightnessDayNight(90, 30);
+    settings::setBrightnessMode(2);
+    settings::setDayNightTimes((m + 1440 - 60) % 1440, (m + 60) % 1440);   // adesso e' giorno
+    brightness::refreshNow();
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    const auto a = brightness::status();
+    settings::setDayNightTimes((m + 60) % 1440, (m + 1440 - 60) % 1440);   // adesso e' notte
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    const auto b = brightness::status();   // sta scendendo piano verso il 30%
+    settings::setBrightnessMode(1);
+    brightness::refreshNow();
+    vTaskDelay(pdMS_TO_TICKS(2500));
+    const auto c = brightness::status();
+    ESP_LOGW("TOUCH_TEST", "luminosita': ora %02d:%02d valida=%d | orari: giorno=%d %u%% -> notte=%d %u%% (graduale) | sole: %s alba %02d:%02d tramonto %02d:%02d %u%%",
+             lt.tm_hour, lt.tm_min, a.time_valid, a.is_day, a.current, b.is_day, b.current, c.is_day ? "giorno" : "notte",
+             c.sunrise_min / 60, c.sunrise_min % 60, c.sunset_min / 60, c.sunset_min % 60, c.current);
+    // ripristino
+    settings::setBrightnessMode(s0.bright_mode);
+    settings::setBrightnessDayNight(s0.bright_day, s0.bright_night);
+    settings::setDayNightTimes(s0.day_from_min, s0.night_from_min);
+    settings::setBrightness(s0.brightness);
+    brightness::refreshNow();
+    settings::setAlertsOnScreen(s0.alerts_onscreen);
+    settings::setAlertsInSetup(s0.alerts_in_setup);
+}
+
+bool notify_test() {
+    // ritorna false se ha solo verificato/pulito le voci di un avvio precedente
+    auto ui = [](auto fn) { if (lvgl_port_lock(-1)) { fn(); lvgl_port_unlock(); } };
+    const bool demo0 = settings::current().demo_mode, dbg0 = settings::current().debug_mode;
+    const size_t real0 = notify::list().size();
+    settings::setDebugMode(true);
+    settings::setDemoMode(true);
+    const size_t sim0 = notify::list().size();
+    settings::setDemoMode(false);
+    settings::setDebugMode(dbg0);
+    if (real0 > 0 || sim0 > 0) {   // avvio dopo il test: le voci devono esserci ancora
+        ESP_LOGW("TOUCH_TEST", "notifiche dopo il riavvio: %u reali, %u simulate %s", (unsigned)real0, (unsigned)sim0,
+                 (real0 >= 2 && sim0 >= 1) ? "OK" : "ERRORE");
+        notify::clear();
+        settings::setDebugMode(true); settings::setDemoMode(true);
+        notify::clear();
+        settings::setDemoMode(demo0); settings::setDebugMode(dbg0);
+        vTaskDelay(pdMS_TO_TICKS(3000));   // salvataggio
+        ESP_LOGW("TOUCH_TEST", "cronologia di prova cancellata");
+        return false;
+    }
+    // reali (simulazione spenta)
+    config::alerts().triggerWarmupCompleteAlert(true);
+    vTaskDelay(pdMS_TO_TICKS(300));
+    config::alerts().closeCurrentAlert();
+    if (auto* r = config::alerts().getRule(config::AlertType::HighCoolantTemp)) {
+        config::alerts().triggerAlertPopup(*r, 118.0f, 0.0f, true);
+        vTaskDelay(pdMS_TO_TICKS(300));
+        config::alerts().closeCurrentAlert();
+    }
+    const size_t real = notify::list().size();
+    const int unread_real = notify::unread();
+    // simulati
+    settings::setDebugMode(true);
+    settings::setDemoMode(true);
+    config::alerts().triggerColdEngineWarmupAlert(3500.0f, 50.0f, 120, true, true);
+    vTaskDelay(pdMS_TO_TICKS(300));
+    config::alerts().closeCurrentAlert();
+    const size_t sim = notify::list().size();
+    const bool sim_only = sim == 1 && notify::showingSimulated();
+    ui([]() { showPage(Page::Guida); notify_page::open(); });
+    vTaskDelay(pdMS_TO_TICKS(600));
+    dump(170);   // pannello in simulazione
+    ui([]() { notify_page::close(); });
+    settings::setDemoMode(false);
+    settings::setDebugMode(dbg0);
+    vTaskDelay(pdMS_TO_TICKS(700));
+    ui([]() { notify_page::open(); });
+    vTaskDelay(pdMS_TO_TICKS(600));
+    dump(171);   // pannello reale
+    notify::markAllRead();
+    const int unread_after = notify::unread();
+    ui([]() { notify_page::close(); });
+    vTaskDelay(pdMS_TO_TICKS(2500));   // lascia salvare su microSD
+    ESP_LOGW("TOUCH_TEST", "notifiche: reali=%u (non lette %d), simulate=%u separate=%d, dopo 'segna lette'=%d %s",
+             (unsigned)real, unread_real, (unsigned)sim, sim_only, unread_after,
+             (real == real0 + 2 && unread_real >= 2 && sim_only && unread_after == 0) ? "OK" : "ERRORE");
+    return true;
+}
+
 void task(void*) {
     vTaskDelay(pdMS_TO_TICKS(15000));
+    if (!notify_test()) vTaskDelete(nullptr);   // secondo avvio: verifica e pulizia della cronologia di prova
+    alerts_brightness_test();
+
     ESP_LOGW("TOUCH_TEST", "pagina all'avvio: %d", static_cast<int>(debugCurrentPage()));
     // i test usano l'ordine pagine predefinito (quello dell'utente si ripristina dopo)
     const page_order::Order user_order = pageOrder();

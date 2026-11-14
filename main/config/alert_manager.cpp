@@ -1,5 +1,8 @@
 #include "config/alert_manager.h"
 #include "ui_v2/alert_banner.h"
+#include "ui_v2/ui_v2.h"
+#include "config/notify_log.h"
+#include "config/settings.h"
 
 #include <cstdio>
 #include <cstring>
@@ -80,9 +83,72 @@ void auto_close_timer_cb(lv_timer_t* /*tmr*/) {
 // --- Banner nello stile Moderno (UI v2) --------------------------------------
 // Se la UI Moderno e' attiva costruisce il banner nuovo nell'host gia' creato,
 // avvia il conto alla rovescia, rilascia il lock e ritorna true.
+// Avviso nascosto mentre si era nelle Impostazioni: si mostra all'uscita
+// (se e' di meno di 60 s fa)
+struct PendingAlert {
+    bool set = false;
+    std::string title, msg;
+    abarth::ui_v2::AlertLevel lvl = abarth::ui_v2::AlertLevel::Info;
+    uint8_t auto_close = 0;
+    std::string ok;
+    int64_t when_ms = 0;
+};
+PendingAlert g_pending;
+bool g_replaying = false;
+
+bool v2_alert(const std::string& title, const std::string& msg, abarth::ui_v2::AlertLevel lvl,
+              uint8_t auto_close_sec, const char* ok_label);
+
+void show_pending_alert() {
+    if (!g_pending.set) return;
+    PendingAlert p = g_pending;
+    g_pending.set = false;
+    if (esp_timer_get_time() / 1000 - p.when_ms > 60000) return;   // troppo vecchio
+    if (!lvgl_port_lock(-1)) return;
+    if (g_alert_modal) close_alert_popup();
+    g_alert_modal = make_alert_banner_host();
+    g_replaying = true;
+    v2_alert(p.title, p.msg, p.lvl, p.auto_close, p.ok.c_str());   // rilascia il lock
+    g_replaying = false;
+}
+
 bool v2_alert(const std::string& title, const std::string& msg, abarth::ui_v2::AlertLevel lvl,
               uint8_t auto_close_sec, const char* ok_label) {
     if (!abarth::ui_v2::alertBannerActive()) return false;
+    // nella cronologia (centro notifiche) anche se poi non viene mostrato;
+    // un avviso rimostrato all'uscita dalle Impostazioni non si registra due volte
+    if (!g_replaying)
+        abarth::notify::add(lvl == abarth::ui_v2::AlertLevel::Critical ? 2 : lvl == abarth::ui_v2::AlertLevel::Warning ? 1 : 0,
+                            title.c_str(), msg.c_str());
+    {
+        // Avvisi a schermo spenti, oppure si e' nelle Impostazioni e non si
+        // vogliono li': niente banner davanti. Gli allarmi critici restano,
+        // come striscia compatta che non blocca i tocchi.
+        static bool hooked = false;
+        if (!hooked) { abarth::ui_v2::setOnLeaveSetup(show_pending_alert); hooked = true; }
+        const auto& s = abarth::settings::current();
+        const bool in_setup = abarth::ui_v2::currentPage() == abarth::ui_v2::Page::Setup;
+        const bool hide = !s.alerts_onscreen || (in_setup && !s.alerts_in_setup);
+        if (hide) {
+            if (lvl == abarth::ui_v2::AlertLevel::Critical) {
+                abarth::ui_v2::buildAlertStrip(g_alert_modal, title.c_str(), lvl);
+                g_bar_indicator = nullptr;
+                g_timer_lbl = nullptr;
+                g_remaining_ticks = (auto_close_sec > 0 ? auto_close_sec : 8) * 10;
+                g_total_ticks = g_remaining_ticks;
+                g_auto_close_timer = lv_timer_create(auto_close_timer_cb, 100, nullptr);
+            } else {
+                lv_obj_delete(g_alert_modal);
+                g_alert_modal = nullptr;
+                if (s.alerts_onscreen) {   // nascosto solo per le Impostazioni: lo si mostra all'uscita
+                    g_pending = {true, title, msg, lvl, auto_close_sec, ok_label ? ok_label : "OK",
+                                 esp_timer_get_time() / 1000};
+                }
+            }
+            lvgl_port_unlock();
+            return true;
+        }
+    }
     abarth::ui_v2::buildAlertBanner(g_alert_modal, title.c_str(), msg.c_str(), lvl, ok_label,
                                     auto_close_sec > 0, &g_timer_lbl, [](lv_event_t*) { close_alert_popup(); });
     if (auto_close_sec > 0) {

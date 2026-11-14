@@ -20,6 +20,7 @@
 #include "ui_v2/data_fmt.h"
 #include "ui_v2/alert_levels.h"
 #include "ui_v2/background.h"
+#include "ui_v2/notify_page.h"
 #include "ui_v2/theme.h"
 #include "ui_v2/widgets.h"
 
@@ -250,6 +251,7 @@ void update_status() {
     g_conn_dot.set(true, col);
 
     update_warm();
+    notify_page::updateBadge();
 
     time_t now = time(nullptr);
     struct tm ti;
@@ -269,7 +271,7 @@ void on_timer(lv_timer_t*) {
 }
 
 void gesture_cb(lv_event_t*) {
-    if (personale::editing() || settings_pages::inSubPage()) return;  // editor/sottopagine: niente swipe
+    if (personale::editing() || settings_pages::inSubPage() || notify_page::isOpen()) return;  // editor/sottopagine/notifiche: niente swipe
     lv_indev_t* indev = lv_indev_active();
     const lv_dir_t d = lv_indev_get_gesture_dir(indev);
     // un solo cambio pagina per swipe: il resto del movimento viene ignorato
@@ -284,6 +286,7 @@ void gear_cb(lv_event_t*) {
     // Pulsante rapido: apre l'elenco Impostazioni; se sei gia' nelle
     // Impostazioni ti riporta alla pagina da cui eri venuto.
     if (personale::editing()) return;
+    notify_page::close();
     settings_pages::closeSubPages();
     if (g_current == Page::Setup) {
         showPage(pos_of(g_before_setup) >= 0 ? g_before_setup : g_seq[0]);
@@ -303,6 +306,9 @@ void dots_tap_cb(lv_event_t* e) {
 }  // namespace
 
 Page debugCurrentPage() { return g_current; }
+Page currentPage() { return g_current; }
+namespace { void (*g_on_leave_setup)() = nullptr; }
+void setOnLeaveSetup(void (*fn)()) { g_on_leave_setup = fn; }
 bool debugWarmBlink() { return g_warm_blink; }
 
 void showPage(Page p) {
@@ -312,7 +318,10 @@ void showPage(Page p) {
         lv_obj_add_flag(g_pages[static_cast<int>(g_current)], LV_OBJ_FLAG_HIDDEN);
     }
     lv_obj_remove_flag(g_pages[idx], LV_OBJ_FLAG_HIDDEN);
+    notify_page::close();   // cambiando pagina il pannello notifiche si chiude
+    const bool leaving_setup = g_current == Page::Setup && p != Page::Setup;
     g_current = p;
+    if (leaving_setup && g_on_leave_setup) g_on_leave_setup();   // es. avviso rimasto in attesa
     layout_dots();
     if (g_title) show_title(idx);
     personale::setPencilVisible(p == Page::Personale);
@@ -362,8 +371,12 @@ void build() {
     lv_obj_add_event_cb(g_scr, gesture_cb, LV_EVENT_GESTURE, nullptr);
 
     // Barra di stato: ora a sinistra, collegamento a destra
-    g_time = w::label(g_scr, "", fontStatus(), kSecondary);
-    lv_obj_set_pos(g_time, kStatusX, kStatusTop);
+    // ora un po' piu' grande (Manrope 22 invece di 19), centrata sulla riga
+    // delle icone; le icone del riscaldamento partono dopo l'ora piu' larga
+    const int32_t status_cy = kStatusTop + lv_font_get_line_height(fontStatus()) / 2;
+    g_time = w::label(g_scr, "", fontUnit(), kText);
+    lv_obj_set_pos(g_time, kStatusX, status_cy - lv_font_get_line_height(fontUnit()) / 2);
+    const int32_t time_w = w::textWidth("00:00", fontUnit());
     // Indicatore riscaldamento dopo l'ora: due icone da 20 px dentro anelli
     // da 36 px (3 px), centrati sulla riga dei testi della barra di stato
     {
@@ -390,7 +403,7 @@ void build() {
             lv_obj_center(wi.img);
             warm_set(wi, kDim, 0);
         };
-        const int32_t x0 = kStatusX + 66;
+        const int32_t x0 = kStatusX + time_w + 14;
         make(g_wi_water, x0, &icon_thermo);
         make(g_wi_oil, x0 + 44, &icon_oil);
         g_warm_time = w::label(g_scr, "", fontStatus(), kWarn);
@@ -420,7 +433,9 @@ void build() {
     // sull'ingranaggio apre soltanto le Impostazioni
     // a destra: matita di PERSONALE e ingranaggio (la fascia si ferma prima)
     const int32_t pencil_x = W - 12 - kGearW - 8 - kGearW;
-    lv_obj_t* tap = w::box(g_scr, 0, kPageBottom, pencil_x - 16, H - kPageBottom, kBg);
+    // a sinistra la campanella delle notifiche (come l'ingranaggio a destra)
+    const int32_t bell_x = 12, tap_x = bell_x + kGearW + 8;
+    lv_obj_t* tap = w::box(g_scr, tap_x, kPageBottom, pencil_x - 16 - tap_x, H - kPageBottom, kBg);
     lv_obj_set_style_bg_opa(tap, LV_OPA_TRANSP, 0);   // si vede lo sfondo
     lv_obj_add_flag(tap, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(tap, dots_tap_cb, LV_EVENT_CLICKED, nullptr);
@@ -442,7 +457,8 @@ void build() {
     // Matita di PERSONALE subito a sinistra dell'ingranaggio, stessa forma
     personale::buildPencil(g_scr, pencil_x, kDotsY - kGearH / 2, kGearW, kGearH);
     g_hint = w::label(g_scr, "", fontLabel(), kSecondary);
-    lv_obj_set_pos(g_hint, kMargin, kDotsY - lv_font_get_line_height(fontLabel()) / 2);
+    lv_obj_set_pos(g_hint, tap_x + 4, kDotsY - lv_font_get_line_height(fontLabel()) / 2);
+    notify_page::buildBell(g_scr, bell_x, kDotsY - kGearH / 2, kGearW, kGearH, kPageTop, kPageBottom);
     lv_obj_add_flag(g_hint, LV_OBJ_FLAG_HIDDEN);
 
     background::create(g_scr);   // sfondo scelto (fisso, sotto a tutto)

@@ -14,6 +14,26 @@ bool alertBannerActive() {
     return g_v2_built && settings::current().ui_style == settings::UiStyle::Racing;
 }
 
+void buildAlertStrip(lv_obj_t* host, const char* title, AlertLevel level) {
+    const uint32_t col = level == AlertLevel::Critical ? kCrit : level == AlertLevel::Warning ? kWarn : kOk;
+    lv_obj_set_style_pad_top(host, 64, 0);   // sotto la barra di stato
+    lv_obj_t* card = lv_obj_create(host);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, LV_HOR_RES - 2 * kMargin, 56);
+    lv_obj_set_style_bg_color(card, c(kCard), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(card, 18, 0);
+    lv_obj_set_style_border_width(card, 2, 0);
+    lv_obj_set_style_border_color(card, c(col), 0);
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE);   // i tocchi passano sotto
+    w::box(card, 20, (56 - kStatusDot) / 2, kStatusDot, kStatusDot, col, LV_RADIUS_CIRCLE);
+    lv_obj_t* t = w::label(card, title, fontUnit(), kText);
+    lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(t, LV_HOR_RES - 2 * kMargin - 60);
+    lv_obj_align(t, LV_ALIGN_LEFT_MID, 20 + kStatusDot + 12, 0);
+}
+
 void buildAlertBanner(lv_obj_t* host, const char* title, const char* msg, AlertLevel level,
                       const char* ok_label, bool countdown, lv_obj_t** out_timer, lv_event_cb_t on_ok) {
     const uint32_t col = level == AlertLevel::Critical ? kCrit : level == AlertLevel::Warning ? kWarn : kOk;

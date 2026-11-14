@@ -20,6 +20,10 @@ enum class Page : uint8_t { Guida = 0, Temperature, Pressioni, Elettrico, Person
 
 /// Mostra una pagina (da chiamare nel task LVGL)
 void showPage(Page p);
+/// Pagina mostrata adesso
+Page currentPage();
+/// Chiamata (nel task LVGL) quando si esce dalle Impostazioni
+void setOnLeaveSetup(void (*fn)());
 
 /// Ordine/visibilita' delle pagine dati: lettura e modifica (salva in NVS e
 /// applica subito; da chiamare nel task LVGL)
