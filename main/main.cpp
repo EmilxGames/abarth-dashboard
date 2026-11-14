@@ -205,8 +205,20 @@ extern "C" void app_main(void) {
     // Scelta interfaccia: Classica o v2 Racing, con ritorno automatico alla
     // Classica se la v2 si e' piantata nei primi 10 s dell'avvio precedente.
     bool use_v2 = abarth::settings::current().ui_style == abarth::settings::UiStyle::Racing;
+    // Solo un crash vero (panic o watchdog) conta come "UI v2 instabile". Un
+    // avvio interrotto da un taglio di corrente (in auto: motore spento o
+    // avviamento nei primi secondi, cavo staccato) non deve riportare alla
+    // Classica: prima bastava per cambiare interfaccia.
+    const esp_reset_reason_t prev_rr = esp_reset_reason();
+    const bool prev_crashed = prev_rr == ESP_RST_PANIC || prev_rr == ESP_RST_INT_WDT ||
+                              prev_rr == ESP_RST_TASK_WDT || prev_rr == ESP_RST_WDT;
+    if (use_v2 && abarth::settings::isUiV2Pending() && !prev_crashed) {
+        DIAG("UI v2 non confermata ma l'avvio precedente non e' finito in crash (reset %d): resto sulla v2",
+             static_cast<int>(prev_rr));
+        abarth::settings::setUiV2Pending(false);
+    }
     if (use_v2 && abarth::settings::isUiV2Pending()) {
-        DIAG("UI v2 non confermata all'avvio precedente: torno alla UI Classica");
+        DIAG("UI v2 andata in crash all'avvio precedente: torno alla UI Classica");
         abarth::settings::setUiStyle(abarth::settings::UiStyle::Classic);
         abarth::settings::setUiV2Pending(false);
         use_v2 = false;
