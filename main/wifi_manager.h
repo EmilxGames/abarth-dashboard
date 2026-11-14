@@ -30,7 +30,9 @@ public:
     std::string lastError() const { return last_error_; }
 
     /// Avvia una scansione delle reti in background. Il callback viene chiamato asincronamente.
-    void startScan(ScanCallback cb);
+    /// passive = solo ascolto (la radio non trasmette): usata all'avvio per
+    /// vedere se la rete salvata c'e', senza picchi di corrente
+    void startScan(ScanCallback cb, bool passive = false);
 
     /// Avvia la connessione a un AP. Il callback viene chiamato asincronamente.
     void connect(const std::string& ssid, const std::string& password, ConnectCallback cb);
@@ -62,7 +64,8 @@ private:
     std::string current_netmask_;
     std::string current_dns_;
     std::string last_error_;
-    std::string pending_ssid_, pending_pass_;   ///< per il task di connessione
+    std::string pending_ssid_, pending_pass_;
+    bool scan_passive_ = false;   ///< per il task di connessione
     
     ScanCallback scan_cb_;
     ConnectCallback connect_cb_;

@@ -1,4 +1,6 @@
 #include "config/connection.h"
+#include <string>
+#include <vector>
 #include "can/can_manager.h"
 #include "obd/obd_manager.h"
 #include "config/saved_links.h"
@@ -24,18 +26,38 @@ void switchMode(settings::ConnectionMode target) {
     }
 }
 void autoConnectInternetWifi() {
-    // in un task a parte, qualche secondo dopo l'avvio (UI e OBD gia' partiti)
+    // in un task a parte, qualche secondo dopo l'avvio (UI e OBD gia' partiti).
+    // Prima si ascolta se la rete salvata c'e' (ricerca passiva: la radio non
+    // trasmette); si prova a collegarsi solo se c'e'. In macchina, lontano da
+    // casa, niente tentativi a vuoto ripetuti (ognuno faceva trasmettere la
+    // radio su tutti i canali).
     xTaskCreate([](void*) {
         vTaskDelay(pdMS_TO_TICKS(12000));
+        links::WifiEntry e;
         auto& wm = wifi::WifiManager::instance();
-        // qualche tentativo: subito dopo l'avvio la rete a volte non risulta ancora visibile
-        for (int attempt = 0; attempt < 4 && !wm.isConnected(); ++attempt) {
-            links::WifiEntry e;
-            if (settings::current().connection_mode == settings::ConnectionMode::WifiObd ||
-                !links::lastWifi(links::WifiRole::Internet, e)) break;
-            ESP_LOGI("connection", "collegamento automatico alla rete salvata %s (tentativo %d)", e.ssid.c_str(), attempt + 1);
-            wm.connect(e.ssid, e.pass, nullptr);   // se non c'e' o fallisce: nessun problema
-            for (int k = 0; k < 150 && !wm.isConnected(); ++k) vTaskDelay(pdMS_TO_TICKS(100));
+        if (settings::current().connection_mode == settings::ConnectionMode::WifiObd || wm.isConnected() ||
+            !links::lastWifi(links::WifiRole::Internet, e)) {
+            vTaskDelete(nullptr);
+            return;
+        }
+        static volatile int found = -1;   // -1 in corso, 0 no, 1 si'
+        static std::string want;
+        want = e.ssid;
+        found = -1;
+        wm.startScan([](const std::vector<wifi::WifiNetwork>& nets) {
+            int f = 0;
+            for (const auto& n : nets) if (n.ssid == want) f = 1;
+            found = f;
+        }, true);
+        for (int k = 0; k < 150 && found < 0; ++k) vTaskDelay(pdMS_TO_TICKS(100));
+        if (found == 1) {
+            for (int attempt = 0; attempt < 2 && !wm.isConnected(); ++attempt) {
+                ESP_LOGI("connection", "rete salvata %s trovata: collegamento (tentativo %d)", e.ssid.c_str(), attempt + 1);
+                wm.connect(e.ssid, e.pass, nullptr);
+                for (int k = 0; k < 150 && !wm.isConnected(); ++k) vTaskDelay(pdMS_TO_TICKS(100));
+            }
+        } else {
+            ESP_LOGI("connection", "rete salvata %s non nei paraggi: nessun collegamento automatico", e.ssid.c_str());
         }
         vTaskDelete(nullptr);
     }, "wifi_auto", 4096, nullptr, 2, nullptr);

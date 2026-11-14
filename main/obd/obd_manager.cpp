@@ -428,7 +428,7 @@ bool ObdManager::pollOnce() {
         // solo periodicamente (per recuperarlo se era un NO DATA transitorio).
         if (!s.supported) {
             if (kNotSupportedRetryMs > 0 &&
-                (now_ms - s.updated_ms) < static_cast<int64_t>(kNotSupportedRetryMs)) {
+                (now_ms - s.nosupport_ms) < static_cast<int64_t>(kNotSupportedRetryMs)) {
                 return true;  // ancora in cooldown, salta
             }
             // scaduto il cooldown: lo riprovo

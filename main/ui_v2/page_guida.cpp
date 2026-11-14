@@ -76,7 +76,7 @@ void update(int64_t now_ms) {
     // Velocita'
     if (b_speed.update(now_ms)) {
         w::setText(g_speed, b_speed.level == Level::Missing ? fmt::kNoData : b_speed.text);
-        w::setColor(g_speed, b_speed.level == Level::Missing ? kDim : kText, g_speed_col);
+        w::setColor(g_speed, b_speed.valueColor(kText, kDim, kStaleText), g_speed_col);
         char u[12];
         std::snprintf(u, sizeof(u), "%s", b_speed.unit);
         for (char* c = u; *c; ++c) if (*c >= 'a' && *c <= 'z') *c = *c - 'a' + 'A';

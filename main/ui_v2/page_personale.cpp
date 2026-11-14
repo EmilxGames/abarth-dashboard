@@ -443,7 +443,7 @@ void update(int64_t now_ms) {
         if (changed) {
             const char* txt = missing ? fmt::kNoData : v.bind.text;
             w::setText(v.value, txt);
-            w::setColor(v.value, missing ? kDim : kText, v.value_col);
+            w::setColor(v.value, v.bind.valueColor(kText, kDim, kStaleText), v.value_col);
             // unita' dopo il valore, solo se ci sta (schede da 1/4)
             const lv_font_t* uf = lv_obj_get_style_text_font(v.unit, LV_PART_MAIN);
             const int32_t vw = w::textWidth(txt, v.vfont);

@@ -50,6 +50,10 @@ struct Sample {
     float   value      = 0.0f;
     int64_t updated_ms = -1;
     bool    supported  = true;   ///< diventa false se la ECU ha risposto NO DATA
+    /// quando e' stata marcata "non supportata" (per riprovarla dopo un po').
+    /// NON tocca updated_ms: prima marcare il PID rinfrescava il timestamp e il
+    /// vecchio valore tornava "fresco" e ricompariva (numeri a caso a auto spenta).
+    int64_t nosupport_ms = -1;
 
     /// Ritorna true se e' stato aggiornato almeno una volta.
     bool valid() const { return updated_ms >= 0; }

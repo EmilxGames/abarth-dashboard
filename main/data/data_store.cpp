@@ -66,8 +66,8 @@ void DataStore::markNotSupported(Metric m) {
     if (idx >= static_cast<size_t>(Metric::Count_)) return;
     if (!mutex_) return;
     if (xSemaphoreTake(mutex_, pdMS_TO_TICKS(10)) == pdTRUE) {
-        samples_[idx].supported  = false;
-        samples_[idx].updated_ms = now_ms();
+        samples_[idx].supported    = false;
+        samples_[idx].nosupport_ms = now_ms();   // il valore resta vecchio (non si rinfresca)
         xSemaphoreGive(mutex_);
     }
 }

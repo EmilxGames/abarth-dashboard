@@ -135,7 +135,7 @@ void ValueCard::set(const Binding& b, Level dot_level) {
     const char* txt = missing ? fmt::kNoData : b.text;
     const bool changed = std::strcmp(lv_label_get_text(value_), txt) != 0;
     if (changed) lv_label_set_text(value_, txt);
-    setColor(value_, missing ? kDim : kText, value_color_);
+    setColor(value_, b.valueColor(kText, kDim, kStaleText), value_color_);
     if (changed || std::strcmp(lv_label_get_text(unit_), b.unit) != 0) {
         lv_label_set_text(unit_, b.unit);
         // unita' subito dopo il valore, allineata alla base
@@ -170,7 +170,7 @@ void WideCard::set(const Binding& b, Level dot_level) {
     const char* txt = missing ? fmt::kNoData : b.text;
     const bool changed = std::strcmp(lv_label_get_text(value_), txt) != 0;
     if (changed) lv_label_set_text(value_, txt);
-    setColor(value_, missing ? kDim : kText, value_color_);
+    setColor(value_, b.valueColor(kText, kDim, kStaleText), value_color_);
     if (changed || std::strcmp(lv_label_get_text(unit_), b.unit) != 0) {
         lv_label_set_text(unit_, b.unit);
         const int32_t base = value_y_ + lv_font_get_line_height(fontValue()) - fontValue()->base_line;

@@ -11,13 +11,21 @@
 
 namespace abarth::ui_v2::fmt {
 
-constexpr uint32_t kFreshMs = 2000;  ///< oltre questa eta' il valore si mostra "--"
+/// Oltre questa eta' il valore si mostra "–". Con l'OBD via Bluetooth un ciclo
+/// di lettura puo' superare i 2 s (PID lenti, risposte lente del dongle): con
+/// 2 s i valori sparivano e ricomparivano. Si tiene l'ultimo valore buono per
+/// qualche secondo (la Classica usa 6 s).
+constexpr uint32_t kFreshMs = 8000;
 
 /// true se il valore e' fresco; out = valore grezzo (unita' interne)
-inline bool get(data::Metric m, int64_t now_ms, float& out) {
+/// Valore vecchio ma ancora mostrato (attenuato) dopo questa eta'
+constexpr uint32_t kStaleMs = 3000;
+
+inline bool get(data::Metric m, int64_t now_ms, float& out, bool* stale = nullptr) {
     const data::Sample s = data::store().get(m);
     if (!s.fresh(kFreshMs, now_ms)) return false;
     out = s.value;
+    if (stale) *stale = (now_ms - s.updated_ms) > static_cast<int64_t>(kStaleMs);
     return true;
 }
 

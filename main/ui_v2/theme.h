@@ -22,6 +22,7 @@ constexpr uint32_t kCardPress = 0x1B1E24;  ///< scheda/riga premuta
 constexpr uint32_t kText      = 0xF4F5F7;  ///< testo principale
 constexpr uint32_t kDim       = 0x5D606A;  ///< etichette e unita'
 constexpr uint32_t kSecondary = 0xC9CBD1;  ///< testo secondario
+constexpr uint32_t kStaleText = 0x8F929B;  ///< valore vecchio (ultima lettura > 3 s), attenuato
 constexpr uint32_t kTrack     = 0x23262D;  ///< traccia barre
 constexpr uint32_t kRowLine   = 0x1D1F24;  ///< separatore righe impostazioni
 constexpr uint32_t kDotIdle   = 0x2B2D33;  ///< pallini indicatore pagina

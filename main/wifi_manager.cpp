@@ -57,7 +57,7 @@ bool WifiManager::init() {
     return true;
 }
 
-void WifiManager::startScan(ScanCallback cb) {
+void WifiManager::startScan(ScanCallback cb, bool passive) {
     if (scanning_) {
         ESP_LOGW(TAG, "Scansione gia' in corso");
         if (cb) cb({});
@@ -65,6 +65,7 @@ void WifiManager::startScan(ScanCallback cb) {
     }
     scan_cb_ = std::move(cb);
     scanning_ = true;
+    scan_passive_ = passive;
     // Avvio radio e ricerca in un task a parte: subito dopo esp_wifi_start il
     // co-processore Wi-Fi (C6, via esp_hosted) non e' ancora pronto e la
     // ricerca fallisce con ESP_ERR_WIFI_STATE (era il motivo per cui la
@@ -76,6 +77,10 @@ void WifiManager::startScan(ScanCallback cb) {
         if (self->initialized_ || self->init()) {
             wifi_scan_config_t scan_config = {};
             scan_config.show_hidden = true;
+            if (self->scan_passive_) {
+                scan_config.scan_type = WIFI_SCAN_TYPE_PASSIVE;
+                scan_config.scan_time.passive = 300;   // ms per canale
+            }
             // Niente disconnessione: la ricerca funziona anche con una rete
             // collegata, cosi' cercare non fa perdere il collegamento attuale
             for (int attempt = 0; attempt < 20; ++attempt) {

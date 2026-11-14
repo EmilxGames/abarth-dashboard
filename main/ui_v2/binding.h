@@ -20,10 +20,15 @@ struct Binding {
     char  text[16] = "";
     char  unit[8]  = "";
     Level level = Level::Missing;
+    bool  stale = false;     ///< valore vecchio (ultima lettura > 3 s fa): si mostra attenuato
     float value = 0.0f;      ///< valore grezzo (unita' interne), valido se level != Missing
     float shown = NAN;       ///< valore nella scala mostrata (per barre), quantizzato
 
-    void bind(data::Metric m) { info = metricInfo(m); text[0] = 0; unit[0] = 0; level = Level::Missing; }
+    void bind(data::Metric m) { info = metricInfo(m); text[0] = 0; unit[0] = 0; level = Level::Missing; stale = false; }
+    /// colore del valore: grigio se assente, attenuato se vecchio
+    uint32_t valueColor(uint32_t normal, uint32_t dim, uint32_t old) const {
+        return level == Level::Missing ? dim : stale ? old : normal;
+    }
 
     /// Aggiorna; ritorna true se testo, unita' o livello sono cambiati.
     bool update(int64_t now_ms) {
@@ -32,7 +37,8 @@ struct Binding {
         const char* u = info->unit;
         Level lv = Level::Missing;
         float v = 0.0f;
-        if (fmt::get(info->metric, now_ms, v)) {
+        bool st = false;
+        if (fmt::get(info->metric, now_ms, v, &st)) {
             fmt::format(info->kind, v, info->decimals, info->unit, t, sizeof(t), u);
             lv = Level::Normal;
             if (!std::isnan(info->warn_high) && v >= info->warn_high) lv = Level::Warn;
@@ -48,7 +54,8 @@ struct Binding {
             else if (info->kind == fmt::Kind::PressKpa) u = settings::pressureUnitSymbol();
             shown = NAN;
         }
-        const bool changed = std::strcmp(t, text) != 0 || std::strcmp(u ? u : "", unit) != 0 || lv != level;
+        const bool changed = std::strcmp(t, text) != 0 || std::strcmp(u ? u : "", unit) != 0 || lv != level || st != stale;
+        stale = st;
         if (changed) {
             std::snprintf(text, sizeof(text), "%s", t);
             std::snprintf(unit, sizeof(unit), "%s", u ? u : "");
