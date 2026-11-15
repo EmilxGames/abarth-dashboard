@@ -85,6 +85,11 @@ void* debugFramebuffer() {
     return lcd ? lcd->getFrameBufferByIndex(0) : nullptr;
 }
 
+void* debugFramebufferN(int idx) {
+    auto* lcd = g_board ? g_board->getLCD() : nullptr;
+    return lcd ? lcd->getFrameBufferByIndex(idx) : nullptr;
+}
+
 void tick() {
     // La lvgl port del v8 crea un suo task di tick/refresh: qui nulla.
 }

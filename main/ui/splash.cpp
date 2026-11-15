@@ -397,6 +397,7 @@ void show() {
 
 void setStatus(const char* text) {
     if (!text) return;
+    ESP_LOGI(TAG, "splash: \"%s\"", text);
     if (!g_status_label) return;
     if (!lvgl_port_lock(-1)) return;
     lv_label_set_text(g_status_label, text);
