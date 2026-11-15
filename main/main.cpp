@@ -15,6 +15,7 @@
 #include "config/alert_manager.h"
 #include "config/auto_brightness.h"
 #include "config/connection.h"
+#include "config/fuel_log.h"
 #include "config/notify_log.h"
 #include "config/settings.h"
 #include "config/warmup_manager.h"
@@ -271,6 +272,8 @@ extern "C" void app_main(void) {
     abarth::connection::autoConnectInternetWifi();
     // Luminosita' automatica (se scelta): un passo al secondo, dopo l'avvio
     abarth::brightness::start();
+    // Rifornimenti: livello carburante filtrato, rilevamento e registro
+    abarth::fuel::start();
 
     // Avvio completo: azzera il contatore (la UI v2 lo azzera anche dopo 10 s)
     abarth::settings::setBootFailCount(0);

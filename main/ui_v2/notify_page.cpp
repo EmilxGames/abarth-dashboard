@@ -1,5 +1,6 @@
 #include "ui_v2/notify_page.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -17,6 +18,8 @@ namespace {
 constexpr int kPageItems = 60;   ///< voci mostrate per volta (lista leggera)
 lv_obj_t* g_scr = nullptr;
 lv_obj_t* g_bell = nullptr;
+lv_obj_t* g_bell_ic = nullptr;
+bool g_pulsing = false;
 lv_obj_t* g_badge = nullptr;
 lv_obj_t* g_badge_lbl = nullptr;
 lv_obj_t* g_panel = nullptr;
@@ -50,6 +53,29 @@ std::string day_label(uint32_t epoch) {
 }
 
 void fill_list(bool more);
+
+/// Campanella che pulsa piano (solo l'opacita' dell'icona: si ridisegna un
+/// riquadro di pochi pixel) quando ci sono notifiche non lette
+void pulse(bool on) {
+    if (!g_bell_ic || on == g_pulsing) return;
+    g_pulsing = on;
+    lv_anim_delete(g_bell_ic, nullptr);
+    if (!on) {
+        lv_obj_set_style_text_opa(g_bell_ic, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(g_bell_ic, c(kSecondary), 0);
+        return;
+    }
+    lv_obj_set_style_text_color(g_bell_ic, c(kText), 0);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, g_bell_ic);
+    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_30);
+    lv_anim_set_duration(&a, 900);
+    lv_anim_set_playback_duration(&a, 900);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_exec_cb(&a, [](void* o, int32_t v) { lv_obj_set_style_text_opa(static_cast<lv_obj_t*>(o), static_cast<lv_opa_t>(v), 0); });
+    lv_anim_start(&a);
+}
 
 lv_obj_t* small_button(lv_obj_t* parent, int32_t x, int32_t y, int32_t w, const char* txt, uint32_t col, lv_event_cb_t cb) {
     lv_obj_t* b = w::box(parent, x, y, w, 52, kTrack, 16);
@@ -203,10 +229,13 @@ void buildBell(lv_obj_t* scr, int32_t x, int32_t y, int32_t wd, int32_t ht, int3
     lv_obj_remove_flag(g_bell, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_t* ic = w::label(g_bell, LV_SYMBOL_BELL, &lv_font_montserrat_28, kSecondary);
     lv_obj_center(ic);
+    g_bell_ic = ic;
     lv_obj_add_event_cb(g_bell, [](lv_event_t*) { if (isOpen()) close(); else open(); }, LV_EVENT_CLICKED, nullptr);
-    // numero delle non lette
-    lv_obj_add_flag(g_bell, LV_OBJ_FLAG_OVERFLOW_VISIBLE);   // il numero sporge in alto
-    g_badge = w::box(g_bell, wd / 2 + 2, -8, 28, 26, kCrit, 13);
+    // numero delle non lette: elemento a se' sullo schermo (non dentro la
+    // campanella, che lo tagliava), alto quanto il carattere piu' un margine
+    const int32_t bh = lv_font_get_line_height(fontLabel()) + 4;
+    g_badge = w::box(scr, x + wd / 2 + 4, y - bh / 2 + 2, bh, bh, kCrit, bh / 2);
+    lv_obj_remove_flag(g_badge, LV_OBJ_FLAG_CLICKABLE);
     g_badge_lbl = w::label(g_badge, "", fontLabel(), kText);
     lv_obj_center(g_badge_lbl);
     lv_obj_add_flag(g_badge, LV_OBJ_FLAG_HIDDEN);
@@ -221,24 +250,31 @@ void updateBadge() {
     const int n = notify::unread();
     if (n <= 0) {
         lv_obj_add_flag(g_badge, LV_OBJ_FLAG_HIDDEN);
+        pulse(false);
         return;
     }
     char b[8];
     std::snprintf(b, sizeof(b), "%s", n > 99 ? "99+" : std::to_string(n).c_str());
     lv_label_set_text(g_badge_lbl, b);
-    lv_obj_set_width(g_badge, n > 9 ? 42 : 28);
+    const int32_t bh = lv_obj_get_height(g_badge);
+    lv_obj_set_width(g_badge, std::max<int32_t>(bh, w::textWidth(b, fontLabel()) + 14));
+    lv_obj_center(g_badge_lbl);
     lv_obj_remove_flag(g_badge, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(g_badge);
+    pulse(!isOpen());
     if (isOpen()) fill_list(false);   // arrivato un avviso mentre il pannello e' aperto
 }
 
 void open() {
     if (g_panel) return;
+    pulse(false);   // aperto il centro notifiche: la campanella smette di pulsare
     build_panel();
     lv_obj_move_foreground(g_panel);
 }
 
 void close() {
     if (!g_panel) return;
+    g_rev_seen = 0;   // ricalcolo: se restano non lette la campanella torna a pulsare
     disarm_clear();
     lv_obj_delete_async(g_panel);
     g_panel = nullptr;
@@ -252,6 +288,8 @@ void setBellVisible(bool on) {
     if (!g_bell) return;
     if (on) lv_obj_remove_flag(g_bell, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(g_bell, LV_OBJ_FLAG_HIDDEN);
+    if (!on) lv_obj_add_flag(g_badge, LV_OBJ_FLAG_HIDDEN);
+    else { g_rev_seen = 0; updateBadge(); }   // ricalcola il numero
 }
 
 }  // namespace abarth::ui_v2::notify_page

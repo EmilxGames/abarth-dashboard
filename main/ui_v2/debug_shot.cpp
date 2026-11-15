@@ -19,6 +19,7 @@
 #include "ui_v2/background.h"
 #include "config/auto_brightness.h"
 #include "config/notify_log.h"
+#include "config/fuel_log.h"
 #include "ui_v2/notify_page.h"
 #include <ctime>
 #include "storage/web_server.h"
@@ -754,8 +755,43 @@ void home_test() {
     ui([first]() { showPage(first); });
 }
 
+void fuel_test() {
+    // in simulazione (registro separato): livello 20% poi 85% -> rifornimento ~22,8 L
+    auto ui = [](auto fn) { if (lvgl_port_lock(-1)) { fn(); lvgl_port_unlock(); } };
+    const bool demo0 = settings::current().demo_mode, dbg0 = settings::current().debug_mode;
+    settings::setDebugMode(true);
+    settings::setDemoMode(true);
+    const size_t n0 = fuel::list().size();
+    fuel::debugOverrideLevel(20.0f);
+    vTaskDelay(pdMS_TO_TICKS(26000));
+    fuel::debugOverrideLevel(85.0f);
+    vTaskDelay(pdMS_TO_TICKS(26000));
+    const auto v = fuel::list();
+    const bool detected = v.size() == n0 + 1;
+    const float liters = detected ? v[0].liters_x10 / 10.0f : 0;
+    fuel::addManual(10.0f);
+    const bool manual = fuel::list().size() == n0 + 2;
+    ui([]() { showPage(Page::Guida); });
+    vTaskDelay(pdMS_TO_TICKS(1200));
+    dump(190);   // campanella con il numero (notifica "Rifornimento rilevato")
+    ui([]() { showPage(Page::Setup); settings_pages::debugOpen(6); });
+    vTaskDelay(pdMS_TO_TICKS(800));
+    dump(191);   // pagina Rifornimenti
+    ESP_LOGW("TOUCH_TEST", "rifornimenti: rilevato=%d litri=%.1f (attesi ~22.8), manuale=%d, notifiche non lette=%d %s",
+             detected, liters, manual, notify::unread(), (detected && liters > 21 && liters < 24.5f && manual) ? "OK" : "ERRORE");
+    // pulizia del registro simulato
+    fuel::debugOverrideLevel(-1);
+    while (fuel::list().size() > n0) fuel::remove(0);
+    notify::clear();
+    ui([]() { settings_pages::closeSubPages(); showPage(Page::Guida); });
+    settings::setDemoMode(demo0);
+    settings::setDebugMode(dbg0);
+    vTaskDelay(pdMS_TO_TICKS(2500));
+}
+
 void task(void*) {
     vTaskDelay(pdMS_TO_TICKS(15000));
+    fuel_test();
     home_test();
     if (!notify_test()) vTaskDelete(nullptr);   // secondo avvio: verifica e pulizia della cronologia di prova
     alerts_brightness_test();

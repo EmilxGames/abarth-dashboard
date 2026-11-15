@@ -3,10 +3,12 @@
 // con le stesse protezioni (worker per le operazioni lente, guardie DTC, WiFi...).
 #include "ui_v2/settings_pages.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <sys/stat.h>
 #include <vector>
@@ -21,6 +23,7 @@
 #include "config/alert_manager.h"
 #include "config/connection.h"
 #include "config/auto_brightness.h"
+#include "config/fuel_log.h"
 #include "config/saved_links.h"
 #include "config/settings.h"
 #include "config/warmup_manager.h"
@@ -488,6 +491,110 @@ void page_can() {
     });
     sp::section(l, "COLLEGAMENTI");
     sp::rowNav(l, "Vedi schema collegamenti", nullptr, []() { page_schema(); });
+}
+
+// =========================================================== RIFORNIMENTI
+void page_fuel();
+void reopen_fuel() { async::postToUi([]() { sp::popAll(); page_fuel(); }); }
+
+string date_time(uint32_t epoch) {
+    if (!epoch) return "data sconosciuta";
+    const time_t t = epoch;
+    struct tm lt;
+    localtime_r(&t, &lt);
+    return fmt("%02d/%02d/%04d %02d:%02d", lt.tm_mday, lt.tm_mon + 1, lt.tm_year + 1900, lt.tm_hour, lt.tm_min);
+}
+
+void page_fuel_item(int idx) {
+    const auto v = fuel::list();
+    if (idx < 0 || idx >= static_cast<int>(v.size())) return;
+    lv_obj_t* l = sp::push("Rifornimento");
+    sp::section(l, date_time(v[idx].epoch).c_str());
+    // modifica sul posto: litri e prezzo (il totale si calcola)
+    auto get = [idx]() { const auto w = fuel::list(); return idx < static_cast<int>(w.size()) ? w[idx] : fuel::Refuel{}; };
+    sp::rowStepper(l, "Litri", [get]() { return fmt("%.1f L", get().liters_x10 / 10.0f); },
+                   [idx, get]() { auto e = get(); e.liters_x10 = e.liters_x10 > 5 ? e.liters_x10 - 5 : 0; fuel::update(idx, e); },
+                   [idx, get]() { auto e = get(); e.liters_x10 = std::min(1200, e.liters_x10 + 5); fuel::update(idx, e); });
+    sp::rowStepper(l, "Prezzo al litro", [get]() {
+        const auto e = get();
+        return e.price_milli ? fmt("%.3f \xE2\x82\xAC", e.price_milli / 1000.0f) : string("non inserito");
+    }, [idx, get]() {
+        auto e = get();
+        if (!e.price_milli) e.price_milli = fuel::lastPriceMilli() ? fuel::lastPriceMilli() : 1850;
+        else e.price_milli = e.price_milli > 10 ? e.price_milli - 10 : 0;
+        fuel::update(idx, e);
+    }, [idx, get]() {
+        auto e = get();
+        e.price_milli = e.price_milli ? e.price_milli + 10 : (fuel::lastPriceMilli() ? fuel::lastPriceMilli() : 1850);
+        fuel::update(idx, e);
+    });
+    sp::rowValue(l, "Totale", [get]() {
+        const auto e = get();
+        return e.price_milli ? fmt("%.2f \xE2\x82\xAC", e.liters_x10 / 10.0f * e.price_milli / 1000.0f) : string("-");
+    });
+    sp::rowValue(l, "Livello", [get]() { const auto e = get(); return fmt("%u%% \xE2\x86\x92 %u%%", e.level_before, e.level_after); });
+    sp::rowValue(l, "Km dal precedente", [get]() { return fmt("%.0f km", get().km_x10 / 10.0f); });
+    sp::section(l, "");
+    sp::rowAction(l, "Elimina rifornimento", [idx]() {
+        sp::confirm("Elimina", "Eliminare questo rifornimento dallo storico?", "Elimina", [idx]() { fuel::remove(idx); reopen_fuel(); }, true);
+    }, true);
+}
+
+void page_fuel() {
+    lv_obj_t* l = sp::push("Rifornimenti");
+    const bool sim = current().demo_mode;
+    const auto v = fuel::list();
+    sp::section(l, sim ? "ULTIMO RIFORNIMENTO (SIMULAZIONE)" : "ULTIMO RIFORNIMENTO");
+    if (v.empty()) {
+        sp::rowInfo(l, []() {
+            return string("Nessun rifornimento ancora. Il display lo riconosce da solo quando il livello del serbatoio "
+                          "sale (serve il livello carburante dall'OBD), oppure aggiungilo qui sotto.");
+        });
+    } else {
+        const auto e = v[0];
+        sp::rowNav(l, date_time(e.epoch).c_str(), [e]() {
+            return e.price_milli ? fmt("%.1f L \xC2\xB7 %.2f \xE2\x82\xAC", e.liters_x10 / 10.0f, e.liters_x10 / 10.0f * e.price_milli / 1000.0f)
+                                 : fmt("%.1f L", e.liters_x10 / 10.0f);
+        }, []() { page_fuel_item(0); });
+    }
+    sp::rowAction(l, "Aggiungi rifornimento manuale", []() {
+        fuel::addManual(20.0f);
+        async::postToUi([]() { sp::popAll(); page_fuel(); page_fuel_item(0); });
+    });
+
+    sp::section(l, "STATISTICHE");
+    sp::rowValue(l, "Consumo medio", []() {
+        const auto st = fuel::stats();
+        return st.has_consumption ? fmt("%.1f L/100 km \xC2\xB7 %.1f km/L", st.l_per_100km, st.km_per_l) : string("dopo due rifornimenti");
+    });
+    sp::rowValue(l, "Autonomia stimata", []() {
+        const auto st = fuel::stats();
+        if (st.has_range) return fmt("%.0f km (%.0f%%)", st.range_km, st.level_pct);
+        return st.level_pct >= 0 ? fmt("livello %.0f%%", st.level_pct) : string("livello non disponibile");
+    });
+    sp::rowValue(l, "Costo per km", []() { const auto st = fuel::stats(); return st.has_cost ? fmt("%.3f \xE2\x82\xAC/km", st.eur_per_km) : string("serve il prezzo"); });
+    sp::rowValue(l, "Spesa del mese", []() { return fmt("%.2f \xE2\x82\xAC", fuel::stats().month_eur); });
+    sp::rowValue(l, "Km dall'ultimo rifornimento", []() { return fmt("%.0f km", fuel::stats().km_since_last); });
+
+    if (v.size() > 1) {
+        sp::section(l, "STORICO");
+        for (size_t i = 1; i < v.size() && i < 30; ++i) {
+            const auto e = v[i];
+            const int idx = static_cast<int>(i);
+            sp::rowNav(l, date_time(e.epoch).c_str(), [e]() { return fmt("%.1f L", e.liters_x10 / 10.0f); }, [idx]() { page_fuel_item(idx); });
+        }
+    }
+
+    sp::section(l, "IMPOSTAZIONI");
+    sp::rowStepper(l, "Capacit\xC3\xA0 serbatoio", []() { return fmt("%u L", current().tank_liters); },
+                   []() { setTankLiters(current().tank_liters - 1); }, []() { setTankLiters(current().tank_liters + 1); });
+    sp::rowStepper(l, "Soglia rilevamento", []() { return fmt("+%u%%", current().refuel_threshold_pct); },
+                   []() { setRefuelThreshold(current().refuel_threshold_pct - 1); },
+                   []() { setRefuelThreshold(current().refuel_threshold_pct + 1); });
+    sp::rowInfo(l, []() {
+        return string("Litri stimati = aumento del livello x capacit\xC3\xA0 del serbatoio (Abarth 595: 35 L). "
+                      "I km si calcolano dalla velocit\xC3\xA0. I rifornimenti della simulazione restano separati.");
+    });
 }
 
 // =========================================================== ORDINE PAGINE
@@ -1081,6 +1188,7 @@ const Cat kCats[] = {
     {"Display", page_display},
     {"Unit\xC3\xA0 di misura", page_unita},
     {"Allarmi", page_allarmi},
+    {"Rifornimenti", page_fuel},
     {"Diagnostica ECU", page_dtc},
     {"Data e ora", page_data},
     {"MicroSD e log", page_sd},

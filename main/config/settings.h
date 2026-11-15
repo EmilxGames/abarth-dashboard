@@ -97,6 +97,9 @@ struct Settings {
     // --- Avvisi a schermo (UI Moderno) ---
     bool         alerts_onscreen  = true;   ///< avvisi a schermo (i critici restano sempre)
     bool         alerts_in_setup  = false;  ///< mostra gli avvisi anche dentro le Impostazioni
+    // --- Rifornimenti (config/fuel_log) ---
+    uint8_t      tank_liters = 35;          ///< capacita' serbatoio (Abarth 595: 35 L)
+    uint8_t      refuel_threshold_pct = 8;  ///< aumento minimo del livello per rilevare un rifornimento
     uint16_t     redline_rpm  = 6200;  ///< UI Moderno: giri da cui la barra diventa rossa
     /// Texture di sfondo.
     BgTexture bg_texture   = BgTexture::Original;
@@ -199,6 +202,8 @@ void setDayNightTimes(uint16_t day_from_min, uint16_t night_from_min);
 void setLocation(int16_t lat_x100, int16_t lon_x100);
 void setAlertsOnScreen(bool on);
 void setAlertsInSetup(bool on);
+void setTankLiters(uint8_t l);
+void setRefuelThreshold(uint8_t pct);
 void setRedlineRpm(uint16_t rpm);
 
 /// Flag di sicurezza della nuova UI: impostato prima di costruirla, azzerato

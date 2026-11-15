@@ -34,6 +34,8 @@ constexpr const char* kKeyLat          = "geo_lat";
 constexpr const char* kKeyLon          = "geo_lon";
 constexpr const char* kKeyAlOnScreen   = "al_screen";
 constexpr const char* kKeyAlInSetup    = "al_setup";
+constexpr const char* kKeyTank         = "tank_l";
+constexpr const char* kKeyRefuelThr    = "rf_thr";
 constexpr const char* kKeyRedline      = "redline";
 constexpr const char* kKeyBootFail     = "boot_fail";
 constexpr const char* kKeyBgTexture   = "bgtexture";
@@ -178,6 +180,10 @@ bool init() {
         g_settings.lon_x100 = (lo >= -18000 && lo <= 18000) ? lo : 1250;
         g_settings.alerts_onscreen = load_u8(kKeyAlOnScreen, 1) != 0;
         g_settings.alerts_in_setup = load_u8(kKeyAlInSetup, 0) != 0;
+        const uint8_t tl = load_u8(kKeyTank, 35);
+        g_settings.tank_liters = (tl >= 15 && tl <= 120) ? tl : 35;
+        const uint8_t rt = load_u8(kKeyRefuelThr, 8);
+        g_settings.refuel_threshold_pct = (rt >= 4 && rt <= 30) ? rt : 8;
         const uint32_t rl = load_u32(kKeyRedline, 6200);
         g_settings.redline_rpm = (rl >= 3000 && rl <= 9000) ? static_cast<uint16_t>(rl) : 6200;
     }
@@ -327,6 +333,16 @@ void setLocation(int16_t lat_x100, int16_t lon_x100) {
 void setAlertsOnScreen(bool on) {
     g_settings.alerts_onscreen = on;
     save_u8(kKeyAlOnScreen, on ? 1 : 0);
+}
+
+void setTankLiters(uint8_t l) {
+    g_settings.tank_liters = l < 15 ? 15 : l > 120 ? 120 : l;
+    save_u8(kKeyTank, g_settings.tank_liters);
+}
+
+void setRefuelThreshold(uint8_t pct) {
+    g_settings.refuel_threshold_pct = pct < 4 ? 4 : pct > 30 ? 30 : pct;
+    save_u8(kKeyRefuelThr, g_settings.refuel_threshold_pct);
 }
 
 void setAlertsInSetup(bool on) {
